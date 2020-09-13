@@ -1,3 +1,5 @@
+Note from Oliver: My research on improving PCL lives here, everything below here is from original salesforce/PCL repo
+
 ## Prototypical Contrastive Learning of Unsupervised Representations (Salesforce Research)
 <img src="./img/PCL_framework.png" width="600">
 
