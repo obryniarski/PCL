@@ -6,6 +6,8 @@ import shutil
 import time
 import warnings
 
+import wandb
+
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -80,6 +82,9 @@ parser.add_argument('--pretrained', default='', type=str,
                     help='path to pretrained checkpoint')
 parser.add_argument('--id', type=str, default='')
 
+parser.add_argument('--imagenet-supervised', action='store_true',
+                    help='running with model trained on imagenet supervised from pretrained location')
+
 
 def main():
     args = parser.parse_args()
@@ -141,14 +146,26 @@ def main_worker(gpu, ngpus_per_node, args):
             args.rank = args.rank * ngpus_per_node + gpu
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
+
+    if torch.distributed.get_rank() == 0:
+        wandb.init(entity='aai', project='Representation Learning', notes='linear classification from supervised imagenet features')
+        wandb.config.update(args)
+
     # create model
     print("=> creating model '{}'".format(args.arch))
-    model = models.__dict__[args.arch]()
-
+    if not args.imagenet_supervised:
+        model = models.__dict__[args.arch](num_classes=10) if args.data == 'cifar' else models.__dict__[args.arch]()
+    else:
+        print('=> loading imagenet pretrained resnet50')
+        model = models.__dict__[args.arch](pretrained=True) if args.data == 'cifar' else models.__dict__[args.arch](pretrained=True)
+        if args.data == 'cifar':
+            model.fc = nn.Linear(in_features=2048, out_features=10, bias=True)
+    
     # freeze all layers but the last fc
     for name, param in model.named_parameters():
         if name not in ['fc.weight', 'fc.bias']:
             param.requires_grad = False
+
     # init the fc layer
     model.fc.weight.data.normal_(mean=0.0, std=0.01)
     model.fc.bias.data.zero_()
@@ -159,13 +176,15 @@ def main_worker(gpu, ngpus_per_node, args):
         logger = None
         
     # load from pre-trained, before DistributedDataParallel constructor
-    if args.pretrained:
+    if args.pretrained and not args.imagenet_supervised:
         if os.path.isfile(args.pretrained):
             print("=> loading checkpoint '{}'".format(args.pretrained))
             checkpoint = torch.load(args.pretrained, map_location="cpu")
 
             # rename pre-trained keys
             state_dict = checkpoint['state_dict']
+
+            
             for k in list(state_dict.keys()):
                 # retain only encoder_q up to before the embedding layer
                 if k.startswith('module.encoder_q') and not k.startswith('module.encoder_q.fc'):
@@ -242,19 +261,53 @@ def main_worker(gpu, ngpus_per_node, args):
     cudnn.benchmark = True
 
     # Data loading code
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
 
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]))
+    if args.data == 'cifar':
+        print(model)
+        print('Training on cifar10...')
+        normalize = transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],
+                                        std=[0.247, 0.243, 0.261])
+
+        train_dataset = datasets.CIFAR10('data', train=True, 
+            transform=transforms.Compose([
+                transforms.RandomResizedCrop(224),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+            ]),
+            download=True)
+
+
+        val_dataset = datasets.CIFAR10('data', train=False, 
+            transform=transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                normalize,
+            ]),
+            download=True)
+    else:
+
+        traindir = os.path.join(args.data, 'train')
+        valdir = os.path.join(args.data, 'val')
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+
+        train_dataset = datasets.ImageFolder(
+            traindir,
+            transforms.Compose([
+                transforms.RandomResizedCrop(224),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+            ]))
+
+        val_dataset = datasets.ImageFolder(valdir, transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                normalize,
+            ]))
 
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -266,12 +319,7 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True, sampler=train_sampler)
 
     val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize,
-        ])),
+        val_dataset,
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
 
@@ -298,7 +346,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
             })
-            if epoch == args.start_epoch:
+            if epoch == args.start_epoch and not args.imagenet_supervised:
                 sanity_check(model.state_dict(), args.pretrained)
 
 
@@ -312,6 +360,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         len(train_loader),
         [batch_time, data_time, losses, top1, top5],
         prefix="Epoch: [{}]".format(epoch))
+
+    num_iters = len(train_loader)
 
     """
     Switch to eval mode:
@@ -346,6 +396,11 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         loss.backward()
         optimizer.step()
 
+        if torch.distributed.get_rank() == 0:
+                wandb.log({'Linear - Train Loss': loss.cpu().item(), 
+                            'Linear - Train Acc@1': acc1.cpu().item(),
+                            'Linear - Train Acc@5': acc5.cpu().item()})
+
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
@@ -363,6 +418,8 @@ def validate(val_loader, model, criterion, args, logger, epoch):
         len(val_loader),
         [batch_time, losses, top1, top5],
         prefix='Test: ')
+
+    num_iters = len(val_loader)
 
     # switch to evaluate mode
     model.eval()
@@ -383,6 +440,11 @@ def validate(val_loader, model, criterion, args, logger, epoch):
             losses.update(loss.item(), images.size(0))
             top1.update(acc1[0], images.size(0))
             top5.update(acc5[0], images.size(0))
+
+            if torch.distributed.get_rank() == 0:
+                wandb.log({'Linear - Val. Loss': loss.cpu().item(), 
+                            'Linear - Val. Acc@1': acc1.cpu().item(),
+                            'Linear - Val. Acc@5': acc5.cpu().item()})
 
             # measure elapsed time
             batch_time.update(time.time() - end)

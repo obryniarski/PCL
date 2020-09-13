@@ -7,7 +7,7 @@ class MoCo(nn.Module):
     Build a MoCo model with: a query encoder, a key encoder, and a queue
     https://arxiv.org/abs/1911.05722
     """
-    def __init__(self, base_encoder, dim=128, r=16384, m=0.999, T=0.1, mlp=False):
+    def __init__(self, base_encoder, dim=128, r=16384, m=0.999, T=0.1, mlp=False, proto_sampling=False):
         """
         dim: feature dimension (default: 128)
         r: queue size; number of negative samples/prototypes (default: 16384)
@@ -20,6 +20,8 @@ class MoCo(nn.Module):
         self.r = r
         self.m = m
         self.T = T
+
+        self.proto_sampling = proto_sampling
 
         # create the encoders
         # num_classes is the output fc dimension
@@ -169,7 +171,13 @@ class MoCo(nn.Module):
         if cluster_result is not None:  
             proto_labels = []
             proto_logits = []
-            for n, (im2cluster,prototypes,density) in enumerate(zip(cluster_result['im2cluster'],cluster_result['centroids'],cluster_result['density'])):
+
+            if self.proto_sampling:
+                sampler = enumerate(zip(cluster_result['im2cluster'],cluster_result['sampled_protos'],cluster_result['density']))
+            else:
+                sampler = enumerate(zip(cluster_result['im2cluster'],cluster_result['centroids'],cluster_result['density']))
+
+            for n, (im2cluster,prototypes,density) in sampler:
                 # get positive prototypes
                 pos_proto_id = im2cluster[index]
                 pos_prototypes = prototypes[pos_proto_id]    

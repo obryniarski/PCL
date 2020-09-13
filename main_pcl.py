@@ -10,6 +10,8 @@ from tqdm import tqdm
 import numpy as np
 import faiss
 
+import wandb
+
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -95,6 +97,8 @@ parser.add_argument('--aug-plus', action='store_true',
                     help='use moco-v2/SimCLR data augmentation')
 parser.add_argument('--cos', action='store_true',
                     help='use cosine lr schedule')
+parser.add_argument('--proto-sampling', action='store_true',
+                    help='prototypes are randomly sampled from cluster instead of centroid')
 
 parser.add_argument('--num-cluster', default='25000,50000,100000', type=str, 
                     help='number of clusters')
@@ -145,7 +149,7 @@ def main():
 
 def main_worker(gpu, ngpus_per_node, args):
     args.gpu = gpu
-    
+
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
 
@@ -164,11 +168,16 @@ def main_worker(gpu, ngpus_per_node, args):
             args.rank = args.rank * ngpus_per_node + gpu
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
+
+    if torch.distributed.get_rank() == 0:
+        wandb.init(entity='aai', project='Representation Learning', notes='random sampling from clusters for prototypes instead of clusters')
+        wandb.config.update(args)
+
     # create model
     print("=> creating model '{}'".format(args.arch))
     model = pcl.builder.MoCo(
         models.__dict__[args.arch],
-        args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp)
+        args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, args.proto_sampling)
     print(model)
 
     if args.distributed:
@@ -226,49 +235,97 @@ def main_worker(gpu, ngpus_per_node, args):
 
     cudnn.benchmark = True
 
-    # Data loading code
-    traindir = os.path.join(args.data, 'train')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-    
-    if args.aug_plus:
-        # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
-        augmentation = [
-            transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
-            transforms.RandomApply([
-                transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
-            ], p=0.8),
-            transforms.RandomGrayscale(p=0.2),
-            transforms.RandomApply([pcl.loader.GaussianBlur([.1, 2.])], p=0.5),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize
-        ]
-    else:
-        # MoCo v1's aug: same as InstDisc https://arxiv.org/abs/1805.01978
-        augmentation = [
-            transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
-            transforms.RandomGrayscale(p=0.2),
-            transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize
-        ]
-        
-    # center-crop augmentation 
-    eval_augmentation = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        normalize
-        ])    
        
-    train_dataset = pcl.loader.ImageFolderInstance(
-        traindir,
-        pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
-    eval_dataset = pcl.loader.ImageFolderInstance(
-        traindir,
-        eval_augmentation)
+    if args.data == 'cifar':
+
+        # Data loading code
+        # traindir = os.path.join(args.data, 'train')
+        normalize = transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],
+                                        std=[0.247, 0.243, 0.261])
+        
+        if args.aug_plus:
+            # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
+            augmentation = [
+                transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
+                transforms.RandomApply([
+                    transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+                ], p=0.8),
+                transforms.RandomGrayscale(p=0.2),
+                transforms.RandomApply([pcl.loader.GaussianBlur([.1, 2.])], p=0.5),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize
+            ]
+        else:
+            # MoCo v1's aug: same as InstDisc https://arxiv.org/abs/1805.01978
+            augmentation = [
+                transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
+                transforms.RandomGrayscale(p=0.2),
+                transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize
+            ]
+            
+        # center-crop augmentation 
+        eval_augmentation = transforms.Compose([
+            transforms.Resize(32),
+            transforms.CenterCrop(32),
+            transforms.ToTensor(),
+            normalize
+            ])  
+
+        train_dataset = pcl.loader.CIFAR10Instance(
+            'data', train=True,
+            transform=pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)), download=True)
+        eval_dataset = pcl.loader.CIFAR10Instance(
+            'data', train=True,
+            transform=eval_augmentation, download=True)
+    else:
+
+        # Data loading code
+        traindir = os.path.join(args.data, 'train')
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+        
+        if args.aug_plus:
+            # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
+            augmentation = [
+                transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+                transforms.RandomApply([
+                    transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+                ], p=0.8),
+                transforms.RandomGrayscale(p=0.2),
+                transforms.RandomApply([pcl.loader.GaussianBlur([.1, 2.])], p=0.5),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize
+            ]
+        else:
+            # MoCo v1's aug: same as InstDisc https://arxiv.org/abs/1805.01978
+            augmentation = [
+                transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+                transforms.RandomGrayscale(p=0.2),
+                transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize
+            ]
+            
+        # center-crop augmentation 
+        eval_augmentation = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            normalize
+            ])    
+
+        train_dataset = pcl.loader.ImageFolderInstance(
+            traindir,
+            pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
+        eval_dataset = pcl.loader.ImageFolderInstance(
+            traindir,
+            eval_augmentation)
     
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -294,11 +351,13 @@ def main_worker(gpu, ngpus_per_node, args):
             features = compute_features(eval_loader, model, args)         
             
             # placeholder for clustering result
-            cluster_result = {'im2cluster':[],'centroids':[],'density':[]}
+            cluster_result = {'im2cluster':[],'centroids':[],'density':[],'sampled_protos':[]}
             for num_cluster in args.num_cluster:
                 cluster_result['im2cluster'].append(torch.zeros(len(eval_dataset),dtype=torch.long).cuda())
                 cluster_result['centroids'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
                 cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda()) 
+                cluster_result['sampled_protos'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
+
 
             if args.gpu == 0:
                 features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice  
@@ -311,7 +370,14 @@ def main_worker(gpu, ngpus_per_node, args):
             # broadcast clustering result
             for k, data_list in cluster_result.items():
                 for data_tensor in data_list:                
-                    dist.broadcast(data_tensor, 0, async_op=False)     
+                    dist.broadcast(data_tensor, 0, async_op=False)
+
+            # if args.mlp:
+            #     model.module.encoder_q.fc[2].weight.data.normal_(mean=0.0, std=0.01)
+            #     model.module.encoder_q.fc[2].bias.data.zero_()
+            # else:
+            #     model.module.encoder_q.fc.weight.data.normal_(mean=0.0, std=0.01)
+            #     model.module.encoder_q.fc.bias.data.zero_()
     
         if args.distributed:
             train_sampler.set_epoch(epoch)
@@ -359,21 +425,33 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
         
         # InfoNCE loss
         loss = criterion(output, target)  
+
+        if torch.distributed.get_rank() == 0:
+            wandb.log({'InfoNCE Loss': loss.cpu().item()})
         
         # ProtoNCE loss
         if output_proto is not None:
             loss_proto = 0
+            n = 0
             for proto_out,proto_target in zip(output_proto, target_proto):
                 loss_proto += criterion(proto_out, proto_target)  
-                accp = accuracy(proto_out, proto_target)[0] 
+                accp = accuracy(proto_out, proto_target)[0]
+                if torch.distributed.get_rank() == 0:
+                    wandb.log({'Proto Accuracy - {}'.format(n): accp.cpu().item()})
                 acc_proto.update(accp[0], images[0].size(0))
+                n += 1
                 
             # average loss across all sets of prototypes
-            loss_proto /= len(args.num_cluster) 
+            loss_proto /= len(args.num_cluster)
             loss += loss_proto   
+            if torch.distributed.get_rank() == 0:
+                wandb.log({'ProtoNCE Loss': loss_proto.cpu().item(), 'Total Loss': loss.cpu().item()})
+
 
         losses.update(loss.item(), images[0].size(0))
         acc = accuracy(output, target)[0] 
+        if torch.distributed.get_rank() == 0:
+            wandb.log({'Instance Accuracy': acc.cpu().item()})
         acc_inst.update(acc[0], images[0].size(0))
 
         # compute gradient and do SGD step
@@ -410,7 +488,7 @@ def run_kmeans(x, args):
     """
     
     print('performing kmeans clustering')
-    results = {'im2cluster':[],'centroids':[],'density':[]}
+    results = {'im2cluster':[],'centroids':[],'density':[],'sampled_protos':[]}
     
     for seed, num_cluster in enumerate(args.num_cluster):
         # intialize faiss clustering parameters
@@ -439,10 +517,19 @@ def run_kmeans(x, args):
         centroids = faiss.vector_to_array(clus.centroids).reshape(k,d)
         
         # sample-to-centroid distances for each cluster 
-        Dcluster = [[] for c in range(k)]          
+        Dcluster = [[] for c in range(k)]
+        indices_by_cluster = [[] for c in range(k)] # for next step - random sampling
         for im,i in enumerate(im2cluster):
             Dcluster[i].append(D[im][0])
-        
+            indices_by_cluster[i].append(im)
+
+
+        # sample a random point from each cluster to act as a prototype rather than the centroid
+        sampled_protos = np.zeros_like(centroids)
+        for i in range(k):
+            selected_proto_id = random.choice(indices_by_cluster[i])
+            sampled_protos[i] = x[selected_proto_id]
+
         # concentration estimation (phi)        
         density = np.zeros(k)
         for i,dist in enumerate(Dcluster):
@@ -461,14 +548,17 @@ def run_kmeans(x, args):
         
         # convert to cuda Tensors for broadcast
         centroids = torch.Tensor(centroids).cuda()
-        centroids = nn.functional.normalize(centroids, p=2, dim=1)    
+        centroids = nn.functional.normalize(centroids, p=2, dim=1) # hmmmm ? 
+
+        sampled_protos = torch.Tensor(sampled_protos).cuda()
 
         im2cluster = torch.LongTensor(im2cluster).cuda()               
         density = torch.Tensor(density).cuda()
         
         results['centroids'].append(centroids)
         results['density'].append(density)
-        results['im2cluster'].append(im2cluster)    
+        results['im2cluster'].append(im2cluster)
+        results['sampled_protos'].append(sampled_protos) 
         
     return results
 
