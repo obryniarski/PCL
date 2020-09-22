@@ -137,7 +137,8 @@ class MoCo(nn.Module):
             return k
 
         # print('done')
-        
+
+        print('um')
         # compute key features
         with torch.no_grad():  # no gradient to keys
             self._momentum_update_key_encoder()  # update the key encoder
