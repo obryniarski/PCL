@@ -1,0 +1,7 @@
+/pcl_cifar10*
+/data
+__pycache__
+Linear_eval
+/pcl_test*
+checkpoint*
+wandb

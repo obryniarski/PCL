@@ -81,6 +81,9 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'N processes per node, which has N GPUs. This is the '
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
+parser.add_argument('--norm-p', default=2, type=float,
+                    help='exponent used for Lp normalization in latent space')
+
 
 parser.add_argument('--low-dim', default=128, type=int,
                     help='feature dimension (default: 128)')
@@ -177,8 +180,9 @@ def main_worker(gpu, ngpus_per_node, args):
     print("=> creating model '{}'".format(args.arch))
     model = pcl.builder.MoCo(
         models.__dict__[args.arch],
-        args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, args.proto_sampling)
-    print(model)
+        args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, args.proto_sampling, 
+        args.norm_p)
+    # print(model)
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -356,13 +360,14 @@ def main_worker(gpu, ngpus_per_node, args):
                 cluster_result['im2cluster'].append(torch.zeros(len(eval_dataset),dtype=torch.long).cuda())
                 cluster_result['centroids'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
                 cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda()) 
-                cluster_result['sampled_protos'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
+                # cluster_result['sampled_protos'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
 
 
             if args.gpu == 0:
                 features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice  
                 features = features.numpy()
                 cluster_result = run_kmeans(features,args)  #run kmeans clustering on master node
+                # print('done')
                 # save the clustering result
                 # torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
                 
@@ -371,6 +376,8 @@ def main_worker(gpu, ngpus_per_node, args):
             for k, data_list in cluster_result.items():
                 for data_tensor in data_list:                
                     dist.broadcast(data_tensor, 0, async_op=False)
+
+            # print('done')
 
             # if args.mlp:
             #     model.module.encoder_q.fc[2].weight.data.normal_(mean=0.0, std=0.01)
@@ -382,9 +389,12 @@ def main_worker(gpu, ngpus_per_node, args):
         if args.distributed:
             train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, epoch, args)
+        # print('done')
 
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch, args, cluster_result)
+
+        # print('done')
 
         if (epoch+1)%5==0 and (not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0)):
@@ -518,17 +528,22 @@ def run_kmeans(x, args):
         
         # sample-to-centroid distances for each cluster 
         Dcluster = [[] for c in range(k)]
-        indices_by_cluster = [[] for c in range(k)] # for next step - random sampling
+        indices_per_cluster = [[] for c in range(k)] # for next step - random sampling
         for im,i in enumerate(im2cluster):
             Dcluster[i].append(D[im][0])
-            indices_by_cluster[i].append(im)
+            indices_per_cluster[i].append(im)
 
-
-        # sample a random point from each cluster to act as a prototype rather than the centroid
-        sampled_protos = np.zeros_like(centroids)
-        for i in range(k):
-            selected_proto_id = random.choice(indices_by_cluster[i])
-            sampled_protos[i] = x[selected_proto_id]
+        if args.proto_sampling:
+            print("WTF")
+            # sample a random point from each cluster to act as a prototype rather than the centroid
+            sampled_protos = np.zeros_like(centroids)
+            for i in range(k):
+                if indices_per_cluster[i]:
+                    # if there are no points other than the centroid (empty), this won't work
+                    selected_proto_id = random.choice(indices_per_cluster[i])
+                    sampled_protos[i] = x[selected_proto_id]
+                else:
+                    sampled_protos[i] = centroids[i]
 
         # concentration estimation (phi)        
         density = np.zeros(k)
@@ -548,9 +563,10 @@ def run_kmeans(x, args):
         
         # convert to cuda Tensors for broadcast
         centroids = torch.Tensor(centroids).cuda()
-        centroids = nn.functional.normalize(centroids, p=2, dim=1) # hmmmm ? 
+        centroids = nn.functional.normalize(centroids, p=args.norm_p, dim=1) # hmmmm ? 
 
-        sampled_protos = torch.Tensor(sampled_protos).cuda()
+        if args.proto_sampling:
+            sampled_protos = torch.Tensor(sampled_protos).cuda()
 
         im2cluster = torch.LongTensor(im2cluster).cuda()               
         density = torch.Tensor(density).cuda()
@@ -558,7 +574,8 @@ def run_kmeans(x, args):
         results['centroids'].append(centroids)
         results['density'].append(density)
         results['im2cluster'].append(im2cluster)
-        results['sampled_protos'].append(sampled_protos) 
+        if args.proto_sampling:
+            results['sampled_protos'].append(sampled_protos) 
         
     return results
 

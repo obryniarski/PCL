@@ -7,13 +7,15 @@ class MoCo(nn.Module):
     Build a MoCo model with: a query encoder, a key encoder, and a queue
     https://arxiv.org/abs/1911.05722
     """
-    def __init__(self, base_encoder, dim=128, r=16384, m=0.999, T=0.1, mlp=False, proto_sampling=False):
+    def __init__(self, base_encoder, dim=128, r=16384, m=0.999, T=0.1, mlp=False, proto_sampling=False, p=2):
         """
         dim: feature dimension (default: 128)
         r: queue size; number of negative samples/prototypes (default: 16384)
         m: momentum for updating key encoder (default: 0.999)
         T: softmax temperature 
         mlp: whether to use mlp projection
+        proto_sampling: whether to use k-means centroids or samples from each cluster as prototype
+        p: Lp normalization exponent
         """
         super(MoCo, self).__init__()
 
@@ -22,6 +24,7 @@ class MoCo(nn.Module):
         self.T = T
 
         self.proto_sampling = proto_sampling
+        self.p = p
 
         # create the encoders
         # num_classes is the output fc dimension
@@ -39,7 +42,7 @@ class MoCo(nn.Module):
 
         # create the queue
         self.register_buffer("queue", torch.randn(dim, r))
-        self.queue = nn.functional.normalize(self.queue, dim=0)
+        self.queue = nn.functional.normalize(self.queue, dim=0, p=self.p)
 
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
 
@@ -125,11 +128,15 @@ class MoCo(nn.Module):
         Output:
             logits, targets, proto_logits, proto_targets
         """
+
+        # print('done')
         
         if is_eval:
             k = self.encoder_k(im_q)  
-            k = nn.functional.normalize(k, dim=1)            
+            k = nn.functional.normalize(k, dim=1, p=self.p)            
             return k
+
+        # print('done')
         
         # compute key features
         with torch.no_grad():  # no gradient to keys
@@ -139,22 +146,26 @@ class MoCo(nn.Module):
             im_k, idx_unshuffle = self._batch_shuffle_ddp(im_k)
 
             k = self.encoder_k(im_k)  # keys: NxC
-            k = nn.functional.normalize(k, dim=1)
+            k = nn.functional.normalize(k, dim=1, p=self.p)
 
             # undo shuffle
             k = self._batch_unshuffle_ddp(k, idx_unshuffle)
 
+        # print('done')
+
         # compute query features
         q = self.encoder_q(im_q)  # queries: NxC
-        q = nn.functional.normalize(q, dim=1)
+        q = nn.functional.normalize(q, dim=1, p=self.p)
         
         # compute logits
         # Einstein sum is more intuitive
         # positive logits: Nx1
+        # print('done')
         l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)
         # negative logits: Nxr
         l_neg = torch.einsum('nc,ck->nk', [q, self.queue.clone().detach()])
 
+        # print('done')
         # logits: Nx(1+r)
         logits = torch.cat([l_pos, l_neg], dim=1)
 
@@ -162,19 +173,23 @@ class MoCo(nn.Module):
         logits /= self.T
 
         # labels: positive key indicators
+        # print('done')
         labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
 
         # dequeue and enqueue
         self._dequeue_and_enqueue(k)
         
+        # print('done')
         # prototypical contrast
         if cluster_result is not None:  
             proto_labels = []
             proto_logits = []
 
             if self.proto_sampling:
+                # print('um')
                 sampler = enumerate(zip(cluster_result['im2cluster'],cluster_result['sampled_protos'],cluster_result['density']))
             else:
+                # print('working')
                 sampler = enumerate(zip(cluster_result['im2cluster'],cluster_result['centroids'],cluster_result['density']))
 
             for n, (im2cluster,prototypes,density) in sampler:
