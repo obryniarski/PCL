@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from random import sample
+from random import sample, choices
 
 class MoCo(nn.Module):
     """
@@ -129,14 +129,12 @@ class MoCo(nn.Module):
             logits, targets, proto_logits, proto_targets
         """
 
-        # print('done')
         
         if is_eval:
             k = self.encoder_k(im_q)  
             k = nn.functional.normalize(k, dim=1, p=self.p)            
             return k
 
-        # print('done')
 
         # compute key features
         with torch.no_grad():  # no gradient to keys
@@ -151,7 +149,6 @@ class MoCo(nn.Module):
             # undo shuffle
             k = self._batch_unshuffle_ddp(k, idx_unshuffle)
 
-        # print('done')
 
         # compute query features
         q = self.encoder_q(im_q)  # queries: NxC
@@ -160,12 +157,10 @@ class MoCo(nn.Module):
         # compute logits
         # Einstein sum is more intuitive
         # positive logits: Nx1
-        # print('done')
         l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)
         # negative logits: Nxr
         l_neg = torch.einsum('nc,ck->nk', [q, self.queue.clone().detach()])
 
-        # print('done')
         # logits: Nx(1+r)
         logits = torch.cat([l_pos, l_neg], dim=1)
 
@@ -179,17 +174,14 @@ class MoCo(nn.Module):
         # dequeue and enqueue
         self._dequeue_and_enqueue(k)
         
-        # print('done')
         # prototypical contrast
         if cluster_result is not None:  
             proto_labels = []
             proto_logits = []
 
             if self.proto_sampling:
-                # print('um')
                 sampler = enumerate(zip(cluster_result['im2cluster'],cluster_result['sampled_protos'],cluster_result['density']))
             else:
-                # print('working')
                 sampler = enumerate(zip(cluster_result['im2cluster'],cluster_result['centroids'],cluster_result['density']))
 
             for n, (im2cluster,prototypes,density) in sampler:
@@ -199,9 +191,10 @@ class MoCo(nn.Module):
                 
                 # sample negative prototypes
                 all_proto_id = [i for i in range(im2cluster.max())]       
-                neg_proto_id = set(all_proto_id)-set(pos_proto_id.tolist())
-                neg_proto_id = sample(neg_proto_id,self.r) #sample r negative prototypes 
-                neg_prototypes = prototypes[neg_proto_id]    
+                neg_proto_id = list(set(all_proto_id)-set(pos_proto_id.tolist()))
+                # neg_proto_id = sample(neg_proto_id,self.r, replace=True) #sample r negative prototypes 
+                neg_proto_id = choices(neg_proto_id, k=self.r) #sample r negative prototypes 
+                neg_prototypes = prototypes[neg_proto_id]
 
                 proto_selected = torch.cat([pos_prototypes,neg_prototypes],dim=0)
                 

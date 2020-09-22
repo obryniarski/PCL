@@ -360,7 +360,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 cluster_result['im2cluster'].append(torch.zeros(len(eval_dataset),dtype=torch.long).cuda())
                 cluster_result['centroids'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
                 cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda()) 
-                # cluster_result['sampled_protos'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
+                cluster_result['sampled_protos'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
 
 
             if args.gpu == 0:
@@ -534,16 +534,15 @@ def run_kmeans(x, args):
             indices_per_cluster[i].append(im)
 
         if args.proto_sampling:
-            print("WTF")
+            # print("WTF")
             # sample a random point from each cluster to act as a prototype rather than the centroid
             sampled_protos = np.zeros_like(centroids)
             for i in range(k):
-                if indices_per_cluster[i]:
-                    # if there are no points other than the centroid (empty), this won't work
-                    selected_proto_id = random.choice(indices_per_cluster[i])
-                    sampled_protos[i] = x[selected_proto_id]
-                else:
-                    sampled_protos[i] = centroids[i]
+                # if there are no points other than the centroid (empty), this won't work
+                # print(len(indices_per_cluster[i]))
+                selected_proto_id = random.choice(indices_per_cluster[i])
+                sampled_protos[i] = x[selected_proto_id]
+
 
         # concentration estimation (phi)        
         density = np.zeros(k)
