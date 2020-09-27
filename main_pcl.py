@@ -536,12 +536,13 @@ def run_kmeans(x, args):
         if args.proto_sampling:
             # print("WTF")
             # sample a random point from each cluster to act as a prototype rather than the centroid
-            sampled_protos = np.zeros_like(centroids)
+            # sampled_protos = [np.zeros((len(indices_per_cluster[i]), d)) for i in range(k)]
+            sampled_protos = [0 for i in range(k)]
             for i in range(k):
                 # if there are no points other than the centroid (empty), this won't work
                 # print(len(indices_per_cluster[i]))
-                selected_proto_id = random.choice(indices_per_cluster[i])
-                sampled_protos[i] = x[selected_proto_id]
+                # selected_proto_id = random.choice(indices_per_cluster[i])
+                sampled_protos[i] = x[indices_per_cluster[i]]
 
 
         # concentration estimation (phi)        

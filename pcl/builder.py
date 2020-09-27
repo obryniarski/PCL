@@ -181,20 +181,34 @@ class MoCo(nn.Module):
 
             if self.proto_sampling:
                 sampler = enumerate(zip(cluster_result['im2cluster'],cluster_result['sampled_protos'],cluster_result['density']))
+                # assume that cluster_result['sampled_protos'] has an array of every element of a cluster i at the ith index
+                # shape of cluster_result['sampled_protos'][i] = (num_elements_in_cluster_i, 128)
             else:
                 sampler = enumerate(zip(cluster_result['im2cluster'],cluster_result['centroids'],cluster_result['density']))
+                # assume that cluster_result['centroids'] has just a single centroid at each index i 
 
             for n, (im2cluster,prototypes,density) in sampler:
                 # get positive prototypes
                 pos_proto_id = im2cluster[index]
-                pos_prototypes = prototypes[pos_proto_id]    
+                if args.proto_sampling:
+                    i = sample(range(len(prototypes[pos_proto_id])), 1) # there are multiple elements in the positive cluster, pick a random 1
+                    pos_prototypes = prototypes[pos_proto_id][i]
+                else:
+                    pos_prototypes = prototypes[pos_proto_id] 
                 
                 # sample negative prototypes
                 all_proto_id = [i for i in range(im2cluster.max())]       
-                neg_proto_id = list(set(all_proto_id)-set(pos_proto_id.tolist()))
-                # neg_proto_id = sample(neg_proto_id,self.r, replace=True) #sample r negative prototypes 
-                neg_proto_id = choices(neg_proto_id, k=self.r) #sample r negative prototypes 
-                neg_prototypes = prototypes[neg_proto_id]
+                if args.proto_sampling:
+                    neg_proto_id = list(set(all_proto_id)-set(pos_proto_id.tolist()))
+                    neg_proto_id = choices(neg_proto_id, k=self.r) #sample r negative prototypes with replacement
+                    neg_prototypes = torch.zeros((self.r, dim))
+                    for i in range(self.r): 
+                        selected_index = sample(range(prototypes[neg_proto_id[i]]), 1) # pick a random index of all the elements in the selected cluster
+                        neg_prototypes[i] = prototypes[neg_proto_id[i]][selected_index] # choose that cluster as a negative prototype
+                else:
+                    neg_proto_id = set(all_proto_id)-set(pos_proto_id.tolist())
+                    neg_proto_id = sample(neg_proto_id,self.r) #sample r negative prototypes 
+                    neg_prototypes = prototypes[neg_proto_id]
 
                 proto_selected = torch.cat([pos_prototypes,neg_prototypes],dim=0)
                 
