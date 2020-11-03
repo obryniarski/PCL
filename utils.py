@@ -14,20 +14,32 @@ import pcl.loader
 
 def padded_cat(tensor_list):
     """
-    Zero-pads each tensor in tensor_list so they are all the same length, then concatenates.
+    Zero-pads each tensor in tensor_list so they are all the same length, then concatenates along dim=0.
 
     Parameters
     ----------
     tensor_list : list of torch.Tensor
         the list of possibly variable size tensors to concatenate
+        shape of each tensor is (n_i, low_dim)
 
     Returns
     -------
     cat_tensor : torch.Tensor
         the new concatenated tensor
-    """
+        shape of output is (len(tensor_list), max(n_i), low_dim)
 
-    
+    lengths : list
+        list of the lengths (n_i) of each tensor in tensor_list (for future operations)
+    """
+    d2 = tensor_list[0].shape[1]
+    max_length = max([s.shape[0] for s in tensor_list])
+    pad = lambda ar: F.pad(ar, (0,0,0,max_length - ar.shape[0])).reshape(1, max_length, d2)
+    padded_tensor_list = list(map(pad, tensor_list))
+    cat_tensor = torch.cat(padded_tensor_list)
+    lengths = [s.shape[0] for s in tensor_list]
+    return cat_tensor, lengths
+
+
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
