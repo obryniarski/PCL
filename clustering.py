@@ -107,3 +107,9 @@ def run_kmeans(x, args):
             results['sampled_protos'].append(sampled_protos) 
         
     return results
+
+
+def run_dbscan(x, args):
+    # make sure the parser args has the necessary dbscan parameters (eps, minPts) - ADDED
+    results = 0
+    return results
