@@ -190,7 +190,7 @@ class MoCo(nn.Module):
             for n, (im2cluster,prototypes,density) in sampler:
                 # get positive prototypes
                 pos_proto_id = im2cluster[index]
-                if args.proto_sampling:
+                if self.proto_sampling:
                     i = sample(range(len(prototypes[pos_proto_id])), 1) # there are multiple elements in the positive cluster, pick a random 1
                     pos_prototypes = prototypes[pos_proto_id][i]
                 else:
@@ -198,7 +198,7 @@ class MoCo(nn.Module):
                 
                 # sample negative prototypes
                 all_proto_id = [i for i in range(im2cluster.max())]       
-                if args.proto_sampling:
+                if self.proto_sampling:
                     neg_proto_id = list(set(all_proto_id)-set(pos_proto_id.tolist()))
                     neg_proto_id = choices(neg_proto_id, k=self.r) #sample r negative prototypes with replacement
                     neg_prototypes = torch.zeros((self.r, dim))

@@ -1,0 +1,42 @@
+#!/bin/bash
+
+# use pcl_cifar10_testing for saving if and only if I don't care about saving the results.
+
+echo Running Experiments...
+
+# —— Unsupervised Runs ——
+
+# sampling from each cluster uniformly for negative samples
+# python main_pcl.py cifar -a resnet50 --lr 0.03 --batch-size 100 --temperature  0.2  --dist-url 'tcp://localhost:10001' \
+# --multiprocessing-distributed --world-size 1 --rank 0 --num-cluster  '250, 500, 1000' --exp-dir pcl_cifar10_testing \
+# --pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --proto-sampling --warmup-epoch 1
+
+
+# baseline, normal PCL
+python main_pcl.py cifar -a resnet50 --lr 0.03 --batch-size 100 --temperature  0.2  --dist-url 'tcp://localhost:10001' \
+--multiprocessing-distributed --world-size 1 --rank 0 --num-cluster  '250, 500, 1000' --exp-dir pcl_cifar10_testing \
+--pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 1
+
+
+
+# —— Linear Testing Runs ——
+
+# python eval_cls_imagenet.py cifar --pretrained 'pcl_cifar10_l1normalize/checkpoint_0199.pth.tar' -a resnet50  \
+# --lr 0.05 --batch-size 256 --id cifar_linear --dist-url 'tcp://localhost:10002' --multiprocessing-distributed \
+# --world-size 1 --rank 0  -p 50 
+
+# python eval_cls_imagenet.py cifar --pretrained 'pcl_test_exp/checkpoint_0039.pth.tar' -a resnet50  --lr .05 \
+# --batch-size 256 --id cifar_linear --dist-url 'tcp://localhost:10002' --multiprocessing-distributed --world-size \
+# 1 --rank 0  -p 50
+
+
+
+# ——- extras ——
+# set up weights and biases logging
+
+
+# python main_pcl.py '/data/2012resized' -a resnet50 --lr 0.03 --batch-size 256 --temperature 0.2 --mlp --aug-plus \
+# --cos --dist-url 'tcp://localhost:10001' --multiprocessing-distributed --world-size 1 --rank 0 --exp-dir imagenet_pcl_baseline
+
+# CUDA_VISIBLE_DEVICES=2,3 python main_pcl.py "\data\2012resized" -a resnet50 --lr 0.03 --batch-size 256 --temperature 0.2 \
+# --mlp --aug-plus --cos --dist-url 'tcp://localhost:10001' --multiprocessing-distributed --world-size 1 --rank 0 --exp-dir imagenet_default_pcl    
