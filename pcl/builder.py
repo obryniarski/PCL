@@ -22,6 +22,7 @@ class MoCo(nn.Module):
         self.r = r
         self.m = m
         self.T = T
+        self.dim = dim
 
         self.proto_sampling = proto_sampling
         self.p = p
@@ -117,6 +118,54 @@ class MoCo(nn.Module):
 
         return x_gather[idx_this]
 
+
+    def select_prototypes(self, prototypes, lengths, im2cluster, index):
+        """
+        Selects the positive and negative prototypes for use in forward method.
+        """
+
+        # sample positive prototypes
+        pos_proto_id = im2cluster[index] # 1-dim torch tensor mapping image index -> cluster
+
+        if self.proto_sampling:
+            i = sample(range(len(prototypes[pos_proto_id])), 1) # there are multiple elements in the positive cluster, pick a random 1
+
+            selected_indices = []
+            for ind in index:
+                cur_len = lengths[im2cluster[ind]].item()
+                selected_int = torch.randint(0, cur_len).item()
+                selected_indices.append(selected_int)
+            selected_indices = torch.LongTensor(selected_indices)
+            print(selected_indices.shape)
+            pos_prototypes = prototypes[index, selected_indices]
+            print(pos_prototypes.shape)
+
+        else:
+            pos_prototypes = prototypes[pos_proto_id] 
+        
+        # sample negative prototypes
+        #all_proto_id = [i for i in range(im2cluster.max())] # list of all possible cluster id's
+        all_proto_id = torch.unique(im2cluster).tolist() # list of all possible cluster id's
+
+        if self.proto_sampling:
+            neg_proto_id = list(set(all_proto_id)-set(pos_proto_id.tolist()))
+            neg_proto_id = choices(neg_proto_id, k=self.r) # sample r negative prototypes with replacement
+            neg_prototypes = torch.zeros((self.r, self.dim))
+            for i in range(self.r): 
+                cur_proto_id = neg_proto_id[i]
+                cur_len = lengths[cur_proto_id]
+                # selected_index = sample(range(prototypes[neg_proto_id[i]]), 1) # pick a random index of all the elements in the selected cluster
+                selected_index = torch.randint(0, cur_len).item()
+                neg_prototypes[i] = prototypes[neg_proto_id[i]][selected_index] # choose that cluster as a negative prototype
+
+        else:
+            neg_proto_id = set(all_proto_id)-set(pos_proto_id.tolist())
+            neg_proto_id = sample(neg_proto_id,self.r) # sample r negative prototypes 
+            neg_prototypes = prototypes[neg_proto_id]
+
+        proto_selected = torch.cat([pos_prototypes,neg_prototypes],dim=0)
+        return proto_selected
+
     def forward(self, im_q, im_k=None, is_eval=False, cluster_result=None, index=None):
         """
         Input:
@@ -189,28 +238,33 @@ class MoCo(nn.Module):
 
             for n, (im2cluster,prototypes,density) in sampler:
                 # get positive prototypes
-                pos_proto_id = im2cluster[index]
-                if self.proto_sampling:
-                    i = sample(range(len(prototypes[pos_proto_id])), 1) # there are multiple elements in the positive cluster, pick a random 1
-                    pos_prototypes = prototypes[pos_proto_id][i]
-                else:
-                    pos_prototypes = prototypes[pos_proto_id] 
-                
-                # sample negative prototypes
-                all_proto_id = [i for i in range(im2cluster.max())]       
-                if self.proto_sampling:
-                    neg_proto_id = list(set(all_proto_id)-set(pos_proto_id.tolist()))
-                    neg_proto_id = choices(neg_proto_id, k=self.r) #sample r negative prototypes with replacement
-                    neg_prototypes = torch.zeros((self.r, dim))
-                    for i in range(self.r): 
-                        selected_index = sample(range(prototypes[neg_proto_id[i]]), 1) # pick a random index of all the elements in the selected cluster
-                        neg_prototypes[i] = prototypes[neg_proto_id[i]][selected_index] # choose that cluster as a negative prototype
-                else:
-                    neg_proto_id = set(all_proto_id)-set(pos_proto_id.tolist())
-                    neg_proto_id = sample(neg_proto_id,self.r) #sample r negative prototypes 
-                    neg_prototypes = prototypes[neg_proto_id]
+                # pos_proto_id = im2cluster[index]
+                # if self.proto_sampling:
+                #     i = sample(range(len(prototypes[pos_proto_id])), 1) # there are multiple elements in the positive cluster, pick a random 1
+                #     pos_prototypes = prototypes[pos_proto_id][i]
+                # else:
+                #     pos_prototypes = prototypes[pos_proto_id] 
 
-                proto_selected = torch.cat([pos_prototypes,neg_prototypes],dim=0)
+                # pos_prototypes = get_pos_prototypes()
+                
+                # # sample negative prototypes
+                # all_proto_id = [i for i in range(im2cluster.max())]       
+                # if self.proto_sampling:
+                #     neg_proto_id = list(set(all_proto_id)-set(pos_proto_id.tolist()))
+                #     neg_proto_id = choices(neg_proto_id, k=self.r) #sample r negative prototypes with replacement
+                #     neg_prototypes = torch.zeros((self.r, dim))
+                #     for i in range(self.r): 
+                #         selected_index = sample(range(prototypes[neg_proto_id[i]]), 1) # pick a random index of all the elements in the selected cluster
+                #         neg_prototypes[i] = prototypes[neg_proto_id[i]][selected_index] # choose that cluster as a negative prototype
+                # else:
+                #     neg_proto_id = set(all_proto_id)-set(pos_proto_id.tolist())
+                #     neg_proto_id = sample(neg_proto_id,self.r) #sample r negative prototypes 
+                #     neg_prototypes = prototypes[neg_proto_id]
+
+                # proto_selected = torch.cat([pos_prototypes,neg_prototypes],dim=0)
+
+
+                proto_selected = self.select_prototypes(prototypes, lengths, im2cluster, index) #NEED TO GET LENGTHS HERE SOMEHOW
                 
                 # compute prototypical logits
                 logits_proto = torch.mm(q,proto_selected.t())

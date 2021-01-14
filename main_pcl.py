@@ -196,7 +196,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 cluster_result['im2cluster'].append(torch.zeros(len(eval_dataset),dtype=torch.long).cuda())
                 cluster_result['centroids'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
                 cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda()) 
-                # cluster_result['sampled_protos'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
+                cluster_result['sampled_protos'].append(torch.zeros(int(num_cluster), len(eval_dataset), args.low_dim).cuda())
                 # cluster_result['sampled_protos'].append(torch.zeros(int(args.pcl_r),args.low_dim).cuda())
 
 

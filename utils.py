@@ -26,18 +26,27 @@ def padded_cat(tensor_list):
     -------
     cat_tensor : torch.Tensor
         the new concatenated tensor
-        shape of output is (len(tensor_list), max(n_i), low_dim)
-
+        shape of output is (len(tensor_list), sum(n_i), low_dim)
     lengths : list
         list of the lengths (n_i) of each tensor in tensor_list (for future operations)
     """
     d2 = tensor_list[0].shape[1]
-    max_length = max([s.shape[0] for s in tensor_list])
+    # max_length = max([s.shape[0] for s in tensor_list])
+
+    max_length = sum([s.shape[0] for s in tensor_list]) 
+    # every tensor has the same length as the original dataset
+
     pad = lambda ar: F.pad(ar, (0,0,0,max_length - ar.shape[0])).reshape(1, max_length, d2)
     padded_tensor_list = list(map(pad, tensor_list))
     cat_tensor = torch.cat(padded_tensor_list)
-    lengths = [s.shape[0] for s in tensor_list]
+    lengths = torch.LongTensor([s.shape[0] for s in tensor_list])
     return cat_tensor, lengths
+
+
+# def sample_from_lengths(lengths):
+#     '''
+#     i.e. lengths = [5, 10, 2, 3]
+#     '''
 
 
 
