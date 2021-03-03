@@ -19,13 +19,13 @@ echo Running Experiments...
 
 
 # —— Linear Testing Runs ——
+#'pcl_cifar10_baseline/checkpoint_0199.pth.tar'
+# python eval_cls_imagenet.py cifar --pretrained 'pcl_test_exp/checkpoint_0199.pth.tar' -a resnet50  \
+# --lr 0.05 --batch-size 256 --id cifar_linear -p 50 --gpu 0
 
 python eval_cls_imagenet.py cifar --pretrained 'pcl_cifar10_baseline/checkpoint_0199.pth.tar' -a resnet50  \
---lr 0.05 --batch-size 256 --id cifar_linear -p 50 --gpu 0
-
-# python eval_cls_imagenet.py cifar --pretrained 'pcl_cifar10_l1normalize/checkpoint_0199.pth.tar' -a resnet50  \
-# --lr 0.05 --batch-size 256 --id cifar_linear --dist-url 'tcp://localhost:10002' --multiprocessing-distributed \
-# --world-size 1 --rank 0  -p 50 
+--lr 0.05 --batch-size 256 --id cifar_linear --dist-url 'tcp://localhost:10002' --multiprocessing-distributed \
+--world-size 1 --rank 0  -p 50 
 
 # python eval_cls_imagenet.py cifar --pretrained 'pcl_test_exp/checkpoint_0039.pth.tar' -a resnet50  --lr .05 \
 # --batch-size 256 --id cifar_linear --dist-url 'tcp://localhost:10002' --multiprocessing-distributed --world-size \
