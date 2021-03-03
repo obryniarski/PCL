@@ -77,7 +77,7 @@ class PCL_Parse(argparse.ArgumentParser):
                             help='use moco-v2/SimCLR data augmentation')
         self.add_argument('--cos', action='store_true',
                             help='use cosine lr schedule')
-        self.add_argument('--proto-sampling', action='store_true',
+        self.add_argument('--centroid-sampling', action='store_true',
                             help='prototypes are randomly sampled from cluster instead of centroid')
 
         self.add_argument('--num-cluster', default='25000,50000,100000', type=str, 

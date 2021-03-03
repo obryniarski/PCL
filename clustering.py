@@ -61,7 +61,7 @@ def run_kmeans(x, args):
             Dcluster[i].append(D[im][0])
             indices_per_cluster[i].append(im)
 
-        if args.proto_sampling:
+        if args.centroid_sampling:
             # print("WTF")
             # sample a random point from each cluster to act as a prototype rather than the centroid
             # sampled_protos = [np.zeros((len(indices_per_cluster[i]), d)) for i in range(k)]
@@ -69,8 +69,9 @@ def run_kmeans(x, args):
             for i in range(k):
                 # if there are no points other than the centroid (empty), this won't work
                 # print(len(indices_per_cluster[i]))
-                # selected_proto_id = random.choice(indices_per_cluster[i])
-                sampled_protos[i] = x[indices_per_cluster[i]]
+                selected_proto_id = random.choice(indices_per_cluster[i % num_cluster])
+                sampled_protos[i] = selected_proto_id
+                # sampled_protos[i] = x[indices_per_cluster[i]]
 
 
         # concentration estimation (phi)        
@@ -93,7 +94,7 @@ def run_kmeans(x, args):
         centroids = torch.Tensor(centroids).cuda()
         centroids = nn.functional.normalize(centroids, p=args.norm_p, dim=1) # hmmmm ? 
 
-        if args.proto_sampling:
+        if args.centroid_sampling:
             for i in range(k):
                 sampled_protos[i] = torch.Tensor(sampled_protos[i]).cuda()
 
@@ -103,7 +104,7 @@ def run_kmeans(x, args):
         results['centroids'].append(centroids)
         results['density'].append(density)
         results['im2cluster'].append(im2cluster)
-        if args.proto_sampling:
+        if args.centroid_sampling:
             results['sampled_protos'].append(sampled_protos) 
         
     return results

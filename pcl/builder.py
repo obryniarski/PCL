@@ -58,16 +58,22 @@ class MoCo(nn.Module):
     @torch.no_grad()
     def _dequeue_and_enqueue(self, keys):
         # gather keys before updating queue
+        print('aa')
+
         keys = concat_all_gather(keys)
+        print('bb')
 
         batch_size = keys.shape[0]
+        print('cc')
 
         ptr = int(self.queue_ptr)
         assert self.r % batch_size == 0  # for simplicity
+        print('dd')
 
         # replace the keys at ptr (dequeue and enqueue)
         self.queue[:, ptr:ptr + batch_size] = keys.T
         ptr = (ptr + batch_size) % self.r  # move pointer
+        print('ee')
 
         self.queue_ptr[0] = ptr
 
@@ -144,8 +150,10 @@ class MoCo(nn.Module):
             pos_prototypes = prototypes[pos_proto_id] 
         
         # sample negative prototypes
-        #all_proto_id = [i for i in range(im2cluster.max())] # list of all possible cluster id's
+        all_proto_id = [i for i in range(im2cluster.max())] # list of all possible cluster id's
+        print('1', all_proto_id)
         all_proto_id = torch.unique(im2cluster).tolist() # list of all possible cluster id's
+        print('2', all_proto_id)
 
         if self.proto_sampling:
             neg_proto_id = list(set(all_proto_id)-set(pos_proto_id.tolist()))
@@ -178,7 +186,7 @@ class MoCo(nn.Module):
             logits, targets, proto_logits, proto_targets
         """
 
-        
+        print('a')
         if is_eval:
             k = self.encoder_k(im_q)  
             k = nn.functional.normalize(k, dim=1, p=self.p)            
@@ -198,6 +206,7 @@ class MoCo(nn.Module):
             # undo shuffle
             k = self._batch_unshuffle_ddp(k, idx_unshuffle)
 
+        print('b')
 
         # compute query features
         q = self.encoder_q(im_q)  # queries: NxC
@@ -219,19 +228,22 @@ class MoCo(nn.Module):
         # labels: positive key indicators
         # print('done')
         labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
+        print('c')
 
         # dequeue and enqueue
         self._dequeue_and_enqueue(k)
-        
+        print('d')
+
         # prototypical contrast
         if cluster_result is not None:  
             proto_labels = []
             proto_logits = []
-
+            print(self.proto_sampling)
             if self.proto_sampling:
                 sampler = enumerate(zip(cluster_result['im2cluster'],cluster_result['sampled_protos'],cluster_result['density']))
                 # assume that cluster_result['sampled_protos'] has an array of every element of a cluster i at the ith index
                 # shape of cluster_result['sampled_protos'][i] = (num_elements_in_cluster_i, 128)
+                # THIS DOESN'T WORK ^
             else:
                 sampler = enumerate(zip(cluster_result['im2cluster'],cluster_result['centroids'],cluster_result['density']))
                 # assume that cluster_result['centroids'] has just a single centroid at each index i 
@@ -240,14 +252,14 @@ class MoCo(nn.Module):
                 # get positive prototypes
                 # pos_proto_id = im2cluster[index]
                 # if self.proto_sampling:
-                #     i = sample(range(len(prototypes[pos_proto_id])), 1) # there are multiple elements in the positive cluster, pick a random 1
-                #     pos_prototypes = prototypes[pos_proto_id][i]
+                #     # i = sample(range(len(prototypes[pos_proto_id])), 1) # there are multiple elements in the positive cluster, pick a random 1
+                #     # pos_prototypes = prototypes[pos_proto_id][i]
                 # else:
                 #     pos_prototypes = prototypes[pos_proto_id] 
 
-                # pos_prototypes = get_pos_prototypes()
+                # # pos_prototypes = get_pos_prototypes() # idk what this is doing here yet
                 
-                # # sample negative prototypes
+                # # # sample negative prototypes
                 # all_proto_id = [i for i in range(im2cluster.max())]       
                 # if self.proto_sampling:
                 #     neg_proto_id = list(set(all_proto_id)-set(pos_proto_id.tolist()))
@@ -263,7 +275,7 @@ class MoCo(nn.Module):
 
                 # proto_selected = torch.cat([pos_prototypes,neg_prototypes],dim=0)
 
-
+                lengths = None # THIS IS A PLACEHOLDER, PROTO_SAMPLING=TRUE WONT WORK WITH THIS HERE
                 proto_selected = self.select_prototypes(prototypes, lengths, im2cluster, index) #NEED TO GET LENGTHS HERE SOMEHOW
                 
                 # compute prototypical logits
@@ -292,7 +304,10 @@ def concat_all_gather(tensor):
     """
     tensors_gather = [torch.ones_like(tensor)
         for _ in range(torch.distributed.get_world_size())]
+    print('omg')
     torch.distributed.all_gather(tensors_gather, tensor, async_op=False)
+    print('what is happening')
+
 
     output = torch.cat(tensors_gather, dim=0)
     return output

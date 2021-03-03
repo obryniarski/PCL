@@ -105,7 +105,7 @@ def main_worker(gpu, ngpus_per_node, args):
     print("=> creating model '{}'".format(args.arch))
     model = pcl.builder.MoCo(
         models.__dict__[args.arch],
-        args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, args.proto_sampling, 
+        args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, args.centroid_sampling, 
         args.norm_p)
     # print(model)
 
@@ -196,21 +196,29 @@ def main_worker(gpu, ngpus_per_node, args):
                 cluster_result['im2cluster'].append(torch.zeros(len(eval_dataset),dtype=torch.long).cuda())
                 cluster_result['centroids'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
                 cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda()) 
-                cluster_result['sampled_protos'].append(torch.zeros(int(num_cluster), len(eval_dataset), args.low_dim).cuda())
-                # cluster_result['sampled_protos'].append(torch.zeros(int(args.pcl_r),args.low_dim).cuda())
+                # cluster_result['sampled_protos'].append(torch.zeros(int(num_cluster), len(eval_dataset), args.low_dim).cuda())
+                cluster_result['sampled_protos'].append(torch.zeros(int(args.pcl_r),args.low_dim).cuda())
 
 
             if args.gpu == 0:
                 features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice  
                 features = features.numpy()
-                cluster_result = run_kmeans(features,args)  #run kmeans clustering on master node
+                cluster_result = run_kmeans(features, args)  #run kmeans clustering on master node
                 print('hello')
                 # print('done')
                 # save the clustering result
                 # torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
                 
+
+            # maybe sample the random negative samples here from all the data in each cluster
+            # then distribute after you've already picked (this avoids the issue that we are putting our entire dataset X on the GPUs)
+            # maybe sample n things from each cluster and average to get the prototype.
+
+
+
             dist.barrier()  
             # broadcast clustering result
+            print('bruh')
 
             for k, data_list in cluster_result.items():
                 for data_tensor in data_list:                
@@ -223,6 +231,8 @@ def main_worker(gpu, ngpus_per_node, args):
         if args.distributed:
             train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, epoch, args)
+
+        print('ahhhhhhhh')
 
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch, args, cluster_result)
@@ -253,19 +263,20 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
 
     # switch to train mode
     model.train()
-
+    print('why is it here')
     end = time.time()
     for i, (images, index) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
-
+        # print('??')
         if args.gpu is not None:
             images[0] = images[0].cuda(args.gpu, non_blocking=True)
             images[1] = images[1].cuda(args.gpu, non_blocking=True)
                 
+        print(images[0].shape)
         # compute output
         output, target, output_proto, target_proto = model(im_q=images[0], im_k=images[1], cluster_result=cluster_result, index=index)
-        
+        print(1)
         # InfoNCE loss
         loss = criterion(output, target)  
 
@@ -290,6 +301,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
             if torch.distributed.get_rank() == 0:
                 wandb.log({'ProtoNCE Loss': loss_proto.cpu().item(), 'Total Loss': loss.cpu().item()})
 
+        print(2)
 
         losses.update(loss.item(), images[0].size(0))
         acc = accuracy(output, target)[0] 

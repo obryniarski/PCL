@@ -14,8 +14,8 @@ echo Running Experiments...
 
 # baseline, normal PCL
 python main_pcl.py cifar -a resnet50 --lr 0.03 --batch-size 100 --temperature  0.2  --dist-url 'tcp://localhost:10001' \
---multiprocessing-distributed --world-size 1 --rank 0 --num-cluster  '250, 500, 1000' --exp-dir pcl_cifar10_testing \
---pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 1
+--multiprocessing-distributed --world-size 1 --rank 0 --num-cluster  '250, 500, 1000' --exp-dir pcl_cifar10_baseline \
+--pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 0
 
 
 
@@ -32,7 +32,9 @@ python main_pcl.py cifar -a resnet50 --lr 0.03 --batch-size 100 --temperature  0
 
 
 # ——- extras ——
-# set up weights and biases logging
+
+# --- Notes ---
+# I DO HAVE TO EDIT builder.py TO GET NEW SAMPLING STUFF TO WORK
 
 
 # python main_pcl.py '/data/2012resized' -a resnet50 --lr 0.03 --batch-size 256 --temperature 0.2 --mlp --aug-plus \
