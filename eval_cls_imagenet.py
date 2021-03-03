@@ -20,7 +20,7 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
-import tensorboard_logger as tb_logger
+# import tensorboard_logger as tb_logger
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -103,26 +103,26 @@ def main():
         warnings.warn('You have chosen a specific GPU. This will completely '
                       'disable data parallelism.')
 
-    if args.dist_url == "env://" and args.world_size == -1:
-        args.world_size = int(os.environ["WORLD_SIZE"])
+    # if args.dist_url == "env://" and args.world_size == -1:
+    #     args.world_size = int(os.environ["WORLD_SIZE"])
 
-    args.distributed = args.world_size > 1 or args.multiprocessing_distributed
+    # args.distributed = args.world_size > 1 or args.multiprocessing_distributed
     
     args.tb_folder = 'Linear_eval/{}_tensorboard'.format(args.id)
     if not os.path.isdir(args.tb_folder):
         os.makedirs(args.tb_folder)
         
     ngpus_per_node = torch.cuda.device_count()
-    if args.multiprocessing_distributed:
-        # Since we have ngpus_per_node processes per node, the total world_size
-        # needs to be adjusted accordingly
-        args.world_size = ngpus_per_node * args.world_size
-        # Use torch.multiprocessing.spawn to launch distributed processes: the
-        # main_worker process function
-        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
-    else:
-        # Simply call main_worker function
-        main_worker(args.gpu, ngpus_per_node, args)
+    # if args.multiprocessing_distributed:
+    #     # Since we have ngpus_per_node processes per node, the total world_size
+    #     # needs to be adjusted accordingly
+    #     args.world_size = ngpus_per_node * args.world_size
+    #     # Use torch.multiprocessing.spawn to launch distributed processes: the
+    #     # main_worker process function
+    #     mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+    # else:
+    #     # Simply call main_worker function
+    main_worker(args.gpu, ngpus_per_node, args)
 
 
 def main_worker(gpu, ngpus_per_node, args):
@@ -132,24 +132,24 @@ def main_worker(gpu, ngpus_per_node, args):
         print("Use GPU: {} for training".format(args.gpu))
         
     # suppress printing if not master
-    if args.multiprocessing_distributed and args.gpu != 0:
-        def print_pass(*args):
-            pass
-        builtins.print = print_pass
+    # if args.multiprocessing_distributed and args.gpu != 0:
+    #     def print_pass(*args):
+    #         pass
+    #     builtins.print = print_pass
         
-    if args.distributed:
-        if args.dist_url == "env://" and args.rank == -1:
-            args.rank = int(os.environ["RANK"])
-        if args.multiprocessing_distributed:
-            # For multiprocessing distributed training, rank needs to be the
-            # global rank among all the processes
-            args.rank = args.rank * ngpus_per_node + gpu
-        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-                                world_size=args.world_size, rank=args.rank)
+    # if args.distributed:
+    #     if args.dist_url == "env://" and args.rank == -1:
+    #         args.rank = int(os.environ["RANK"])
+    #     if args.multiprocessing_distributed:
+    #         # For multiprocessing distributed training, rank needs to be the
+    #         # global rank among all the processes
+    #         args.rank = args.rank * ngpus_per_node + gpu
+    #     dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
+    #                             world_size=args.world_size, rank=args.rank)
 
-    if torch.distributed.get_rank() == 0:
-        wandb.init(entity='aai', project='Representation Learning', notes='linear classification from supervised imagenet features')
-        wandb.config.update(args)
+    # if torch.distributed.get_rank() == 0:
+    wandb.init(entity='aai', project='Representation Learning', notes='linear classification from supervised imagenet features')
+    wandb.config.update(args)
 
     # create model
     print("=> creating model '{}'".format(args.arch))
@@ -170,10 +170,10 @@ def main_worker(gpu, ngpus_per_node, args):
     model.fc.weight.data.normal_(mean=0.0, std=0.01)
     model.fc.bias.data.zero_()
     
-    if args.gpu==0:
-        logger = tb_logger.Logger(logdir=args.tb_folder, flush_secs=2)
-    else:
-        logger = None
+    # if args.gpu==0:
+    #     logger = tb_logger.Logger(logdir=args.tb_folder, flush_secs=2)
+    # else:
+    #     logger = None
         
     # load from pre-trained, before DistributedDataParallel constructor
     if args.pretrained and not args.imagenet_supervised:
@@ -184,51 +184,58 @@ def main_worker(gpu, ngpus_per_node, args):
             # rename pre-trained keys
             state_dict = checkpoint['state_dict']
 
-            
+            # print(state_dict.keys())
+            # print('ahhhhhhhhhhhhhhhhh ------------------')
             for k in list(state_dict.keys()):
                 # retain only encoder_q up to before the embedding layer
-                if k.startswith('module.encoder_q') and not k.startswith('module.encoder_q.fc'):
+                # if k.startswith('module.encoder_q') and not k.startswith('module.encoder_q.fc'):
+                #     # remove prefix
+                #     state_dict[k[len("module.encoder_q."):]] = state_dict[k]
+                if k.startswith('encoder_q') and not k.startswith('encoder_q.fc'):
                     # remove prefix
-                    state_dict[k[len("module.encoder_q."):]] = state_dict[k]
+                    state_dict[k[len("encoder_q."):]] = state_dict[k]
                 # delete renamed or unused k
                 del state_dict[k]
-
+            # print(state_dict.keys())
             args.start_epoch = 0
             msg = model.load_state_dict(state_dict, strict=False)
+            # print(msg)
+            # print('ummm -------------------------------')
+            # print(msg.missing_keys)
             assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
 
             print("=> loaded pre-trained model '{}'".format(args.pretrained))
         else:
             print("=> no checkpoint found at '{}'".format(args.pretrained))
 
-    if args.distributed:
-        # For multiprocessing distributed, DistributedDataParallel constructor
-        # should always set the single device scope, otherwise,
-        # DistributedDataParallel will use all available devices.
-        if args.gpu is not None:
-            torch.cuda.set_device(args.gpu)
-            model.cuda(args.gpu)
-            # When using a single GPU per process and per
-            # DistributedDataParallel, we need to divide the batch size
-            # ourselves based on the total number of GPUs we have
-            args.batch_size = int(args.batch_size / ngpus_per_node)
-            args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
-        else:
-            model.cuda()
-            # DistributedDataParallel will divide and allocate batch_size to all
-            # available GPUs if device_ids are not set
-            model = torch.nn.parallel.DistributedDataParallel(model)
-    elif args.gpu is not None:
+    # if args.distributed:
+    #     # For multiprocessing distributed, DistributedDataParallel constructor
+    #     # should always set the single device scope, otherwise,
+    #     # DistributedDataParallel will use all available devices.
+    #     if args.gpu is not None:
+    #         torch.cuda.set_device(args.gpu)
+    #         model.cuda(args.gpu)
+    #         # When using a single GPU per process and per
+    #         # DistributedDataParallel, we need to divide the batch size
+    #         # ourselves based on the total number of GPUs we have
+    #         args.batch_size = int(args.batch_size / ngpus_per_node)
+    #         args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
+    #         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+    #     else:
+    #         model.cuda()
+    #         # DistributedDataParallel will divide and allocate batch_size to all
+    #         # available GPUs if device_ids are not set
+    #         model = torch.nn.parallel.DistributedDataParallel(model)
+    if args.gpu is not None:
         torch.cuda.set_device(args.gpu)
         model = model.cuda(args.gpu)
-    else:
-        # DataParallel will divide and allocate batch_size to all available GPUs
-        if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-            model.features = torch.nn.DataParallel(model.features)
-            model.cuda()
-        else:
-            model = torch.nn.DataParallel(model).cuda()
+    # else:
+    #     # DataParallel will divide and allocate batch_size to all available GPUs
+    #     if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
+    #         model.features = torch.nn.DataParallel(model.features)
+    #         model.cuda()
+    #     else:
+    #         model = torch.nn.DataParallel(model).cuda()
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
@@ -309,10 +316,11 @@ def main_worker(gpu, ngpus_per_node, args):
                 normalize,
             ]))
 
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    else:
-        train_sampler = None
+    # if args.distributed:
+    #     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    # else:
+    #     
+    train_sampler = None
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
@@ -328,15 +336,15 @@ def main_worker(gpu, ngpus_per_node, args):
         return
 
     for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            train_sampler.set_epoch(epoch)
+        # if args.distributed:
+        #     train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch, args)
 
         # evaluate on validation set
-        acc1 = validate(val_loader, model, criterion, args, logger, epoch)
+        acc1 = validate(val_loader, model, criterion, args, epoch)
 
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0):
@@ -396,8 +404,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         loss.backward()
         optimizer.step()
 
-        if torch.distributed.get_rank() == 0:
-                wandb.log({'Linear - Train Loss': loss.cpu().item(), 
+        # if torch.distributed.get_rank() == 0:
+        wandb.log({'Linear - Train Loss': loss.cpu().item(), 
                             'Linear - Train Acc@1': acc1.cpu().item(),
                             'Linear - Train Acc@5': acc5.cpu().item()})
 
@@ -409,7 +417,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             progress.display(i)
 
 
-def validate(val_loader, model, criterion, args, logger, epoch):
+def validate(val_loader, model, criterion, args, epoch):
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
@@ -441,8 +449,9 @@ def validate(val_loader, model, criterion, args, logger, epoch):
             top1.update(acc1[0], images.size(0))
             top5.update(acc5[0], images.size(0))
 
-            if torch.distributed.get_rank() == 0:
-                wandb.log({'Linear - Val. Loss': loss.cpu().item(), 
+            # if torch.distributed.get_rank() == 0:
+            #     
+            wandb.log({'Linear - Val. Loss': loss.cpu().item(), 
                             'Linear - Val. Acc@1': acc1.cpu().item(),
                             'Linear - Val. Acc@5': acc5.cpu().item()})
 
@@ -456,9 +465,9 @@ def validate(val_loader, model, criterion, args, logger, epoch):
         # TODO: this should also be done with the ProgressMeter
         print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
-    if args.gpu==0:    
-        logger.log_value('test_acc', top1.avg, epoch)
-        logger.log_value('test_acc5', top5.avg, epoch)
+    # if args.gpu==0:    
+    #     logger.log_value('test_acc', top1.avg, epoch)
+    #     logger.log_value('test_acc5', top5.avg, epoch)
     return top1.avg
 
 
@@ -480,8 +489,10 @@ def sanity_check(state_dict, pretrained_weights):
         if 'fc.weight' in k or 'fc.bias' in k:
             continue
         # name in pretrained model
-        k_pre = 'module.encoder_q.' + k[len('module.'):] \
-            if k.startswith('module.') else 'module.encoder_q.' + k
+        # k_pre = 'module.encoder_q.' + k[len('module.'):] \
+        #     if k.startswith('module.') else 'module.encoder_q.' + k
+        k_pre = 'encoder_q.' + k[len(''):] \
+            if k.startswith('module.') else 'encoder_q.' + k
 
         assert ((state_dict[k].cpu() == state_dict_pre[k_pre]).all()), \
             '{} is changed in linear classifier training.'.format(k)

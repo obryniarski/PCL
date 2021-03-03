@@ -58,71 +58,42 @@ class MoCo(nn.Module):
     @torch.no_grad()
     def _dequeue_and_enqueue(self, keys):
         # gather keys before updating queue
-        print('aa')
-
-        keys = concat_all_gather(keys)
-        print('bb')
+        # keys = concat_all_gather(keys)
 
         batch_size = keys.shape[0]
-        print('cc')
 
         ptr = int(self.queue_ptr)
         assert self.r % batch_size == 0  # for simplicity
-        print('dd')
 
         # replace the keys at ptr (dequeue and enqueue)
         self.queue[:, ptr:ptr + batch_size] = keys.T
         ptr = (ptr + batch_size) % self.r  # move pointer
-        print('ee')
 
         self.queue_ptr[0] = ptr
 
     @torch.no_grad()
-    def _batch_shuffle_ddp(self, x):
+    def _batch_shuffle(self, x):
         """
         Batch shuffle, for making use of BatchNorm.
         *** Only support DistributedDataParallel (DDP) model. ***
         """
-        # gather from all gpus
         batch_size_this = x.shape[0]
-        x_gather = concat_all_gather(x)
-        batch_size_all = x_gather.shape[0]
-
-        num_gpus = batch_size_all // batch_size_this
-
-        # random shuffle index
-        idx_shuffle = torch.randperm(batch_size_all).cuda()
-
-        # broadcast to all gpus
-        torch.distributed.broadcast(idx_shuffle, src=0)
-
-        # index for restoring
+        
+        idx_shuffle = torch.randperm(batch_size_this).cuda()
         idx_unshuffle = torch.argsort(idx_shuffle)
 
-        # shuffled index for this gpu
-        gpu_idx = torch.distributed.get_rank()
-        idx_this = idx_shuffle.view(num_gpus, -1)[gpu_idx]
-
-        return x_gather[idx_this], idx_unshuffle
+        idx_this = idx_shuffle.view(-1)
+        return x[idx_this], idx_unshuffle
 
     @torch.no_grad()
-    def _batch_unshuffle_ddp(self, x, idx_unshuffle):
+    def _batch_unshuffle(self, x, idx_unshuffle):
         """
         Undo batch shuffle.
         *** Only support DistributedDataParallel (DDP) model. ***
         """
-        # gather from all gpus
         batch_size_this = x.shape[0]
-        x_gather = concat_all_gather(x)
-        batch_size_all = x_gather.shape[0]
-
-        num_gpus = batch_size_all // batch_size_this
-
-        # restored index for this gpu
-        gpu_idx = torch.distributed.get_rank()
-        idx_this = idx_unshuffle.view(num_gpus, -1)[gpu_idx]
-
-        return x_gather[idx_this]
+        idx_this = idx_unshuffle.view(-1)
+        return x[idx_this]
 
 
     def select_prototypes(self, prototypes, lengths, im2cluster, index):
@@ -151,9 +122,9 @@ class MoCo(nn.Module):
         
         # sample negative prototypes
         all_proto_id = [i for i in range(im2cluster.max())] # list of all possible cluster id's
-        print('1', all_proto_id)
-        all_proto_id = torch.unique(im2cluster).tolist() # list of all possible cluster id's
-        print('2', all_proto_id)
+        # print('1', all_proto_id)
+        # all_proto_id = torch.unique(im2cluster).tolist() # list of all possible cluster id's
+        # print('2', all_proto_id)
 
         if self.proto_sampling:
             neg_proto_id = list(set(all_proto_id)-set(pos_proto_id.tolist()))
@@ -172,7 +143,7 @@ class MoCo(nn.Module):
             neg_prototypes = prototypes[neg_proto_id]
 
         proto_selected = torch.cat([pos_prototypes,neg_prototypes],dim=0)
-        return proto_selected
+        return proto_selected, pos_proto_id, neg_proto_id
 
     def forward(self, im_q, im_k=None, is_eval=False, cluster_result=None, index=None):
         """
@@ -186,7 +157,6 @@ class MoCo(nn.Module):
             logits, targets, proto_logits, proto_targets
         """
 
-        print('a')
         if is_eval:
             k = self.encoder_k(im_q)  
             k = nn.functional.normalize(k, dim=1, p=self.p)            
@@ -198,15 +168,14 @@ class MoCo(nn.Module):
             self._momentum_update_key_encoder()  # update the key encoder
 
             # shuffle for making use of BN
-            im_k, idx_unshuffle = self._batch_shuffle_ddp(im_k)
+            im_k, idx_unshuffle = self._batch_shuffle(im_k)
 
             k = self.encoder_k(im_k)  # keys: NxC
             k = nn.functional.normalize(k, dim=1, p=self.p)
 
             # undo shuffle
-            k = self._batch_unshuffle_ddp(k, idx_unshuffle)
+            k = self._batch_unshuffle(k, idx_unshuffle)
 
-        print('b')
 
         # compute query features
         q = self.encoder_q(im_q)  # queries: NxC
@@ -226,19 +195,16 @@ class MoCo(nn.Module):
         logits /= self.T
 
         # labels: positive key indicators
-        # print('done')
         labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
-        print('c')
 
         # dequeue and enqueue
         self._dequeue_and_enqueue(k)
-        print('d')
 
         # prototypical contrast
         if cluster_result is not None:  
             proto_labels = []
             proto_logits = []
-            print(self.proto_sampling)
+
             if self.proto_sampling:
                 sampler = enumerate(zip(cluster_result['im2cluster'],cluster_result['sampled_protos'],cluster_result['density']))
                 # assume that cluster_result['sampled_protos'] has an array of every element of a cluster i at the ith index
@@ -249,34 +215,9 @@ class MoCo(nn.Module):
                 # assume that cluster_result['centroids'] has just a single centroid at each index i 
 
             for n, (im2cluster,prototypes,density) in sampler:
-                # get positive prototypes
-                # pos_proto_id = im2cluster[index]
-                # if self.proto_sampling:
-                #     # i = sample(range(len(prototypes[pos_proto_id])), 1) # there are multiple elements in the positive cluster, pick a random 1
-                #     # pos_prototypes = prototypes[pos_proto_id][i]
-                # else:
-                #     pos_prototypes = prototypes[pos_proto_id] 
-
-                # # pos_prototypes = get_pos_prototypes() # idk what this is doing here yet
-                
-                # # # sample negative prototypes
-                # all_proto_id = [i for i in range(im2cluster.max())]       
-                # if self.proto_sampling:
-                #     neg_proto_id = list(set(all_proto_id)-set(pos_proto_id.tolist()))
-                #     neg_proto_id = choices(neg_proto_id, k=self.r) #sample r negative prototypes with replacement
-                #     neg_prototypes = torch.zeros((self.r, dim))
-                #     for i in range(self.r): 
-                #         selected_index = sample(range(prototypes[neg_proto_id[i]]), 1) # pick a random index of all the elements in the selected cluster
-                #         neg_prototypes[i] = prototypes[neg_proto_id[i]][selected_index] # choose that cluster as a negative prototype
-                # else:
-                #     neg_proto_id = set(all_proto_id)-set(pos_proto_id.tolist())
-                #     neg_proto_id = sample(neg_proto_id,self.r) #sample r negative prototypes 
-                #     neg_prototypes = prototypes[neg_proto_id]
-
-                # proto_selected = torch.cat([pos_prototypes,neg_prototypes],dim=0)
 
                 lengths = None # THIS IS A PLACEHOLDER, PROTO_SAMPLING=TRUE WONT WORK WITH THIS HERE
-                proto_selected = self.select_prototypes(prototypes, lengths, im2cluster, index) #NEED TO GET LENGTHS HERE SOMEHOW
+                proto_selected, pos_proto_id, neg_proto_id = self.select_prototypes(prototypes, lengths, im2cluster, index) #NEED TO GET LENGTHS HERE SOMEHOW
                 
                 # compute prototypical logits
                 logits_proto = torch.mm(q,proto_selected.t())
@@ -293,21 +234,3 @@ class MoCo(nn.Module):
             return logits, labels, proto_logits, proto_labels
         else:
             return logits, labels, None, None
-
-
-# utils
-@torch.no_grad()
-def concat_all_gather(tensor):
-    """
-    Performs all_gather operation on the provided tensors.
-    *** Warning ***: torch.distributed.all_gather has no gradient.
-    """
-    tensors_gather = [torch.ones_like(tensor)
-        for _ in range(torch.distributed.get_world_size())]
-    print('omg')
-    torch.distributed.all_gather(tensors_gather, tensor, async_op=False)
-    print('what is happening')
-
-
-    output = torch.cat(tensors_gather, dim=0)
-    return output

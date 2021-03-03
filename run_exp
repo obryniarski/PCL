@@ -13,13 +13,15 @@ echo Running Experiments...
 
 
 # baseline, normal PCL
-python main_pcl.py cifar -a resnet50 --lr 0.03 --batch-size 100 --temperature  0.2  --dist-url 'tcp://localhost:10001' \
---multiprocessing-distributed --world-size 1 --rank 0 --num-cluster  '250, 500, 1000' --exp-dir pcl_cifar10_baseline \
---pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 0
+# python main_pcl.py cifar -a resnet50 --lr 0.03 --batch-size 100 --temperature  0.2  --gpu 0 --num-cluster  '350, 500, 1000' --exp-dir pcl_cifar10_baseline \
+# --pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 20
 
 
 
 # —— Linear Testing Runs ——
+
+python eval_cls_imagenet.py cifar --pretrained 'pcl_cifar10_baseline/checkpoint_0199.pth.tar' -a resnet50  \
+--lr 0.05 --batch-size 256 --id cifar_linear -p 50 --gpu 0
 
 # python eval_cls_imagenet.py cifar --pretrained 'pcl_cifar10_l1normalize/checkpoint_0199.pth.tar' -a resnet50  \
 # --lr 0.05 --batch-size 256 --id cifar_linear --dist-url 'tcp://localhost:10002' --multiprocessing-distributed \

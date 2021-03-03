@@ -15,8 +15,8 @@ def compute_features(eval_loader, model, args):
             images = images.cuda(non_blocking=True)
             feat = model(images,is_eval=True) 
             features[index] = feat
-    dist.barrier()        
-    dist.all_reduce(features, op=dist.ReduceOp.SUM)     
+    # dist.barrier()        
+    # dist.all_reduce(features, op=dist.ReduceOp.SUM)     
     return features.cpu()
 
 def run_kmeans(x, args):

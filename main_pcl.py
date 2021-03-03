@@ -81,25 +81,8 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
 
-    # suppress printing if not master    
-    if args.multiprocessing_distributed and args.gpu != 0:
-        def print_pass(*args):
-            pass
-        builtins.print = print_pass
-        
-    if args.distributed:
-        if args.dist_url == "env://" and args.rank == -1:
-            args.rank = int(os.environ["RANK"])
-        if args.multiprocessing_distributed:
-            # For multiprocessing distributed training, rank needs to be the
-            # global rank among all the processes
-            args.rank = args.rank * ngpus_per_node + gpu
-        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-                                world_size=args.world_size, rank=args.rank)
-
-    if torch.distributed.get_rank() == 0:
-        wandb.init(entity='aai', project='Representation Learning', notes='random sampling from clusters for prototypes instead of clusters')
-        wandb.config.update(args)
+    wandb.init(entity='aai', project='Representation Learning', notes='random sampling from clusters for prototypes instead of clusters')
+    wandb.config.update(args)
 
     # create model
     print("=> creating model '{}'".format(args.arch))
@@ -109,33 +92,16 @@ def main_worker(gpu, ngpus_per_node, args):
         args.norm_p)
     # print(model)
 
-    if args.distributed:
-        # For multiprocessing distributed, DistributedDataParallel constructor
-        # should always set the single device scope, otherwise,
-        # DistributedDataParallel will use all available devices.
-        if args.gpu is not None:
-            torch.cuda.set_device(args.gpu)
-            model.cuda(args.gpu)
-            # When using a single GPU per process and per
-            # DistributedDataParallel, we need to divide the batch size
-            # ourselves based on the total number of GPUs we have
-            args.batch_size = int(args.batch_size / ngpus_per_node)
-            args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
-        else:
-            model.cuda()
-            # DistributedDataParallel will divide and allocate batch_size to all
-            # available GPUs if device_ids are not set
-            model = torch.nn.parallel.DistributedDataParallel(model)
-    elif args.gpu is not None:
+    
+    if args.gpu is not None:
         torch.cuda.set_device(args.gpu)
         model = model.cuda(args.gpu)
         # comment out the following line for debugging
-        raise NotImplementedError("Only DistributedDataParallel is supported.")
-    else:
+        # raise NotImplementedError("Only DistributedDataParallel is supported.")
+    # else:
         # AllGather implementation (batch shuffle, queue update, etc.) in
         # this code only supports DistributedDataParallel.
-        raise NotImplementedError("Only DistributedDataParallel is supported.")
+        # raise NotImplementedError("Only DistributedDataParallel is supported.")
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
@@ -166,13 +132,9 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # Data Loading
     train_dataset, eval_dataset = load_data(args)
-    
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-        eval_sampler = torch.utils.data.distributed.DistributedSampler(eval_dataset,shuffle=False)
-    else:
-        train_sampler = None
-        eval_sampler = None
+
+    train_sampler = None
+    eval_sampler = None
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
@@ -204,8 +166,6 @@ def main_worker(gpu, ngpus_per_node, args):
                 features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice  
                 features = features.numpy()
                 cluster_result = run_kmeans(features, args)  #run kmeans clustering on master node
-                print('hello')
-                # print('done')
                 # save the clustering result
                 # torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
                 
@@ -214,30 +174,11 @@ def main_worker(gpu, ngpus_per_node, args):
             # then distribute after you've already picked (this avoids the issue that we are putting our entire dataset X on the GPUs)
             # maybe sample n things from each cluster and average to get the prototype.
 
-
-
-            dist.barrier()  
-            # broadcast clustering result
-            print('bruh')
-
-            for k, data_list in cluster_result.items():
-                for data_tensor in data_list:                
-                        dist.broadcast(data_tensor, 0, async_op=False)
-
-
-            print('hello2')
-
-    
-        if args.distributed:
-            train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, epoch, args)
 
-        print('ahhhhhhhh')
 
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch, args, cluster_result)
-
-        # print('done')
 
         if (epoch+1)%5==0 and (not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0)):
@@ -263,25 +204,21 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
 
     # switch to train mode
     model.train()
-    print('why is it here')
     end = time.time()
     for i, (images, index) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
-        # print('??')
         if args.gpu is not None:
             images[0] = images[0].cuda(args.gpu, non_blocking=True)
             images[1] = images[1].cuda(args.gpu, non_blocking=True)
                 
-        print(images[0].shape)
         # compute output
         output, target, output_proto, target_proto = model(im_q=images[0], im_k=images[1], cluster_result=cluster_result, index=index)
-        print(1)
+
         # InfoNCE loss
         loss = criterion(output, target)  
 
-        if torch.distributed.get_rank() == 0:
-            wandb.log({'InfoNCE Loss': loss.cpu().item()})
+        wandb.log({'InfoNCE Loss': loss.cpu().item()})
         
         # ProtoNCE loss
         if output_proto is not None:
@@ -290,23 +227,24 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
             for proto_out,proto_target in zip(output_proto, target_proto):
                 loss_proto += criterion(proto_out, proto_target)  
                 accp = accuracy(proto_out, proto_target)[0]
-                if torch.distributed.get_rank() == 0:
-                    wandb.log({'Proto Accuracy - {}'.format(n): accp.cpu().item()})
+
+                wandb.log({'Proto Accuracy - {}'.format(n): accp.cpu().item()})
+
                 acc_proto.update(accp[0], images[0].size(0))
                 n += 1
                 
             # average loss across all sets of prototypes
             loss_proto /= len(args.num_cluster)
             loss += loss_proto   
-            if torch.distributed.get_rank() == 0:
-                wandb.log({'ProtoNCE Loss': loss_proto.cpu().item(), 'Total Loss': loss.cpu().item()})
 
-        print(2)
+            wandb.log({'ProtoNCE Loss': loss_proto.cpu().item(), 'Total Loss': loss.cpu().item()})
+
 
         losses.update(loss.item(), images[0].size(0))
         acc = accuracy(output, target)[0] 
-        if torch.distributed.get_rank() == 0:
-            wandb.log({'Instance Accuracy': acc.cpu().item()})
+
+        wandb.log({'Instance Accuracy': acc.cpu().item()})
+
         acc_inst.update(acc[0], images[0].size(0))
 
         # compute gradient and do SGD step
