@@ -19,7 +19,7 @@ echo Running Experiments...
 
 # baseline, normal PCL
 python main_pcl.py cifar -a resnet50 --lr 0.03 --batch-size 100 --temperature  0.2  --gpu 0 --num-cluster  '350, 500, 1000' --exp-dir pcl_cifar10_TEST \
---pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 0
+--pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 3
 
 
 

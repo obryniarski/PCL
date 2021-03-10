@@ -226,15 +226,22 @@ class MoCo(nn.Module):
 
                 # compute prototypical logits
                 logits_proto = torch.mm(q,proto_selected.t()) # q is NxC and proto_selected.t() is Cx(N+r)
-
-                # targets for prototype assignment
-                labels_proto = torch.linspace(0, q.size(0)-1, steps=q.size(0)).long().cuda() # basically range(0, q.size(0)) but in pytorch
-                
-
-                # print("NEW --------", labels_proto)
                 # scaling temperatures for the selected prototypes
                 temp_proto = density[torch.cat([pos_proto_id,torch.LongTensor(neg_proto_id).cuda()],dim=0)]  
                 logits_proto /= temp_proto
+
+                # we want to turn the left CxN matrix into just a single column of its diagonal
+                pos_logits = torch.diag(logits_proto, 0) 
+                # print(pos_logits.shape, pos_logits)
+                logits_proto = torch.cat([pos_logits.view(pos_logits.shape[0], 1), logits_proto[:, pos_logits.shape[0]:]], dim=1)
+                # print(logits_proto.shape)
+
+                # targets for prototype assignment
+                # labels_proto = torch.linspace(0, q.size(0)-1, steps=q.size(0)).long().cuda() # basically range(0, q.size(0)) but in pytorch
+                labels_proto = torch.zeros(logits_proto.shape[0], dtype=torch.long).cuda()
+
+                # print("NEW --------", labels_proto)
+                
                 
                 proto_labels.append(labels_proto)
                 proto_logits.append(logits_proto)
