@@ -42,8 +42,9 @@ def run_kmeans(x, args):
 
         res = faiss.StandardGpuResources()
         cfg = faiss.GpuIndexFlatConfig()
-        cfg.useFloat16 = False
-        cfg.device = args.gpu    
+        cfg.useFloat16 = False # originally False
+        # cfg.device = args.gpu    
+        cfg.device = 1 #REMEMBER TO CHANGE THIS
         index = faiss.GpuIndexFlatL2(res, d, cfg)  
 
         clus.train(x, index)   

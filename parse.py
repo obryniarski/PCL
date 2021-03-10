@@ -17,7 +17,7 @@ class PCL_Parse(argparse.ArgumentParser):
                             help='model architecture: ' +
                                 ' | '.join(model_names) +
                                 ' (default: resnet50)')
-        self.add_argument('-j', '--workers', default=32, type=int, metavar='N',
+        self.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                             help='number of data loading workers (default: 32)')
         self.add_argument('--epochs', default=200, type=int, metavar='N',
                             help='number of total epochs to run')
