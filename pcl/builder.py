@@ -230,6 +230,7 @@ class MoCo(nn.Module):
                 # targets for prototype assignment
                 labels_proto = torch.linspace(0, q.size(0)-1, steps=q.size(0)).long().cuda() # basically range(0, q.size(0)) but in pytorch
                 
+
                 # print("NEW --------", labels_proto)
                 # scaling temperatures for the selected prototypes
                 temp_proto = density[torch.cat([pos_proto_id,torch.LongTensor(neg_proto_id).cuda()],dim=0)]  

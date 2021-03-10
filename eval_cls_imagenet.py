@@ -185,7 +185,6 @@ def main_worker(gpu, ngpus_per_node, args):
             state_dict = checkpoint['state_dict']
 
             # print(state_dict.keys())
-            # print('ahhhhhhhhhhhhhhhhh ------------------')
             for k in list(state_dict.keys()):
                 # retain only encoder_q up to before the embedding layer
                 # if k.startswith('module.encoder_q') and not k.startswith('module.encoder_q.fc'):
@@ -196,12 +195,9 @@ def main_worker(gpu, ngpus_per_node, args):
                     state_dict[k[len("encoder_q."):]] = state_dict[k]
                 # delete renamed or unused k
                 del state_dict[k]
-            # print(state_dict.keys())
+
             args.start_epoch = 0
             msg = model.load_state_dict(state_dict, strict=False)
-            # print(msg)
-            # print('ummm -------------------------------')
-            # print(msg.missing_keys)
             assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
 
             print("=> loaded pre-trained model '{}'".format(args.pretrained))
@@ -495,6 +491,9 @@ def sanity_check(state_dict, pretrained_weights):
             if k.startswith('module.') else 'encoder_q.' + k
 
         assert ((state_dict[k].cpu() == state_dict_pre[k_pre]).all()), \
+            '{} is changed in linear classifier training.'.format(k)
+
+    print("=> sanity check passed.")state_dict_pre[k_pre]).all()), \
             '{} is changed in linear classifier training.'.format(k)
 
     print("=> sanity check passed.")
