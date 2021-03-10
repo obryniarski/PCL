@@ -91,7 +91,7 @@ class MoCo(nn.Module):
         Undo batch shuffle.
         *** Only support DistributedDataParallel (DDP) model. ***
         """
-        batch_size_this = x.shape[0]
+        # batch_size_this = x.shape[0]
         idx_this = idx_unshuffle.view(-1)
         return x[idx_this]
 
@@ -138,6 +138,8 @@ class MoCo(nn.Module):
                 neg_prototypes[i] = prototypes[neg_proto_id[i]][selected_index] # choose that cluster as a negative prototype
 
         else:
+            # print(set(all_proto_id))
+            # print(set(pos_proto_id.tolist()))
             neg_proto_id = set(all_proto_id)-set(pos_proto_id.tolist())
             neg_proto_id = sample(neg_proto_id,self.r) # sample r negative prototypes 
             neg_prototypes = prototypes[neg_proto_id]
@@ -148,15 +150,16 @@ class MoCo(nn.Module):
     def forward(self, im_q, im_k=None, is_eval=False, cluster_result=None, index=None):
         """
         Input:
-            im_q: a batch of query images
-            im_k: a batch of key images
+            im_q: a batch of query images 
+            im_k: a batch of key images 
             is_eval: return momentum embeddings (used for clustering)
             cluster_result: cluster assignments, centroids, and density
-            index: indices for training samples
+            index: indices for training samples [N]
         Output:
             logits, targets, proto_logits, proto_targets
         """
-
+        # if index != None:
+        #     print(index.shape)
         if is_eval:
             k = self.encoder_k(im_q)  
             k = nn.functional.normalize(k, dim=1, p=self.p)            
@@ -171,7 +174,8 @@ class MoCo(nn.Module):
             im_k, idx_unshuffle = self._batch_shuffle(im_k)
 
             k = self.encoder_k(im_k)  # keys: NxC
-            k = nn.functional.normalize(k, dim=1, p=self.p)
+            # print(k.shape)
+            k = nn.functional.normalize(k, dim=1, p=self.p) # sidenote: this projects the representations onto the hypersphere
 
             # undo shuffle
             k = self._batch_unshuffle(k, idx_unshuffle)
@@ -218,13 +222,15 @@ class MoCo(nn.Module):
 
                 lengths = None # THIS IS A PLACEHOLDER, PROTO_SAMPLING=TRUE WONT WORK WITH THIS HERE
                 proto_selected, pos_proto_id, neg_proto_id = self.select_prototypes(prototypes, lengths, im2cluster, index) #NEED TO GET LENGTHS HERE SOMEHOW
-                
+                # proto_selected.shape = [N, C]
+
                 # compute prototypical logits
-                logits_proto = torch.mm(q,proto_selected.t())
-                
+                logits_proto = torch.mm(q,proto_selected.t()) # q is NxC and proto_selected.t() is Cx(N+r)
+
                 # targets for prototype assignment
-                labels_proto = torch.linspace(0, q.size(0)-1, steps=q.size(0)).long().cuda()
+                labels_proto = torch.linspace(0, q.size(0)-1, steps=q.size(0)).long().cuda() # basically range(0, q.size(0)) but in pytorch
                 
+                # print("NEW --------", labels_proto)
                 # scaling temperatures for the selected prototypes
                 temp_proto = density[torch.cat([pos_proto_id,torch.LongTensor(neg_proto_id).cuda()],dim=0)]  
                 logits_proto /= temp_proto
