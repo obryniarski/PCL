@@ -186,7 +186,7 @@ def load_data(args):
     else:
 
         # Data loading code
-        train_dataset, eval_dataset = load_data(args)
+        # train_dataset, eval_dataset = load_data(args)
 
         traindir = os.path.join(args.data, 'train')
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -232,3 +232,4 @@ def load_data(args):
             eval_augmentation)
 
     return train_dataset, eval_dataset
+

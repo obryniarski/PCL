@@ -88,7 +88,9 @@ class PCL_Parse(argparse.ArgumentParser):
                             help='experiment directory')
 
         # extra clustering arguments
-        self.add_argument('--eps', default=1., type=float,
+        self.add_argument('--clustering', default='kmeans', type=str, 
+                            help='clustering algorithm to use for ProtoNCE loss')
+        self.add_argument('--eps', default=0.5, type=float,
                             help='epsilon parameter for DBSCAN clustering algorithm')
         self.add_argument('--minPts', default=5, type=int,
                             help='minPts parameter for DBSCAN clustering algorithm')

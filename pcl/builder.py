@@ -121,7 +121,7 @@ class MoCo(nn.Module):
             pos_prototypes = prototypes[pos_proto_id] 
         
         # sample negative prototypes
-        all_proto_id = [i for i in range(im2cluster.max())] # list of all possible cluster id's
+        all_proto_id = [i for i in range(im2cluster.max())]     # list of all possible cluster id's
         # print('1', all_proto_id)
         # all_proto_id = torch.unique(im2cluster).tolist() # list of all possible cluster id's
         # print('2', all_proto_id)
@@ -140,7 +140,10 @@ class MoCo(nn.Module):
         else:
             # print(set(all_proto_id))
             # print(set(pos_proto_id.tolist()))
+            # print(pos_proto_id)
+            # print(all_proto_id)
             neg_proto_id = set(all_proto_id)-set(pos_proto_id.tolist())
+            # print(neg_proto_id)
             neg_proto_id = sample(neg_proto_id,self.r) # sample r negative prototypes 
             neg_prototypes = prototypes[neg_proto_id]
 
@@ -224,6 +227,7 @@ class MoCo(nn.Module):
                 proto_selected, pos_proto_id, neg_proto_id = self.select_prototypes(prototypes, lengths, im2cluster, index) #NEED TO GET LENGTHS HERE SOMEHOW
                 # proto_selected.shape = [N, C]
 
+                # I FIXED THIS PART -------------------------
                 # compute prototypical logits
                 logits_proto = torch.mm(q,proto_selected.t()) # q is NxC and proto_selected.t() is Cx(N+r)
                 # scaling temperatures for the selected prototypes
@@ -232,15 +236,26 @@ class MoCo(nn.Module):
 
                 # we want to turn the left CxN matrix into just a single column of its diagonal
                 pos_logits = torch.diag(logits_proto, 0) 
-                # print(pos_logits.shape, pos_logits)
                 logits_proto = torch.cat([pos_logits.view(pos_logits.shape[0], 1), logits_proto[:, pos_logits.shape[0]:]], dim=1)
-                # print(logits_proto.shape)
+                
 
                 # targets for prototype assignment
                 # labels_proto = torch.linspace(0, q.size(0)-1, steps=q.size(0)).long().cuda() # basically range(0, q.size(0)) but in pytorch
                 labels_proto = torch.zeros(logits_proto.shape[0], dtype=torch.long).cuda()
 
                 # print("NEW --------", labels_proto)
+                # I FIXED THIS PART -------------------------
+
+
+                # # compute prototypical logits
+                # logits_proto = torch.mm(q,proto_selected.t())
+                
+                # # targets for prototype assignment
+                # labels_proto = torch.linspace(0, q.size(0)-1, steps=q.size(0)).long().cuda()
+                
+                # # scaling temperatures for the selected prototypes
+                # temp_proto = density[torch.cat([pos_proto_id,torch.LongTensor(neg_proto_id).cuda()],dim=0)]  
+                # logits_proto /= temp_proto
                 
                 
                 proto_labels.append(labels_proto)

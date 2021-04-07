@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 import numpy as np
+from sklearn.cluster import DBSCAN
 
 from tqdm import tqdm
 
@@ -10,6 +11,19 @@ def compute_features(eval_loader, model, args):
     print('Computing features...')
     model.eval()
     features = torch.zeros(len(eval_loader.dataset),args.low_dim).cuda()
+    for i, (images, index) in enumerate(tqdm(eval_loader)):
+        with torch.no_grad():
+            images = images.cuda(non_blocking=True)
+            feat = model(images,is_eval=True) 
+            features[index] = feat
+    # dist.barrier()        
+    # dist.all_reduce(features, op=dist.ReduceOp.SUM)     
+    return features.cpu()
+
+def compute_features(eval_loader, model, low_dim=128):
+    print('Computing features...')
+    model.eval()
+    features = torch.zeros(len(eval_loader.dataset),low_dim).cuda()
     for i, (images, index) in enumerate(tqdm(eval_loader)):
         with torch.no_grad():
             images = images.cuda(non_blocking=True)
@@ -43,8 +57,8 @@ def run_kmeans(x, args):
         res = faiss.StandardGpuResources()
         cfg = faiss.GpuIndexFlatConfig()
         cfg.useFloat16 = False # originally False
-        # cfg.device = args.gpu    
-        cfg.device = 1 #REMEMBER TO CHANGE THIS
+        cfg.device = args.gpu    
+        # cfg.device = 1 #REMEMBER TO CHANGE THIS
         index = faiss.GpuIndexFlatL2(res, d, cfg)  
 
         clus.train(x, index)   
@@ -110,8 +124,83 @@ def run_kmeans(x, args):
         
     return results
 
+def im2cluster_to_centroids(x, im2cluster):
+    # returns an np.ndarray of c_i, where each c_i is the mean of all inputs with cluster i
+
+    centroids = np.zeros((max(im2cluster) + 1, len(x[0]))) # (num_clusters, C)
+
+    # unique_clusters = set(im2cluster)
+    counts = np.zeros(max(im2cluster) + 1) # (num_clusters)
+
+    for idx in range(len(x)):
+        cluster = im2cluster[idx]
+        centroids[cluster] += x[idx]
+        counts[cluster] += 1
+
+    return centroids / np.expand_dims(counts, axis=1)
+
+    # returns 
+
+
+
+
+
+from sklearn.manifold import TSNE, LocallyLinearEmbedding
+import matplotlib.pyplot as plt
+import wandb
 
 def run_dbscan(x, args):
     # make sure the parser args has the necessary dbscan parameters (eps, minPts) - ADDED
-    results = 0
+
+    # x = x.numpy() # this is already done before calling the function
+    # n = x.shape[0] # number of samples
+    # d = x.shape[1] # dimension
+    print('performing dbscan clustering')
+    results = {'im2cluster':[],'centroids':[],'density':[],'sampled_protos':[]}
+
+
+    print(x)
+    print( np.linalg.norm(x[0] - x[1], ord=2) )
+    print( np.linalg.norm(x[7] - x[3], ord=2) )
+
+    # visualizing the data
+
+    # print('Visualizing Representations...')
+    # methods = [LocallyLinearEmbedding(n_components=2, method='standard'), TSNE(n_components=2, init='pca')]
+    # fig = plt.figure(figsize=(15,8))
+    # for i, method in enumerate(methods):
+    #     y = method.fit_transform(x)
+    #     ax = fig.add_subplot(1, len(methods), i + 1)
+    #     ax.scatter(y[:, 0], y[:, 1])
+
+    # fig.savefig('visualized_features')
+
+    # plt.show()
+
+    db = DBSCAN(eps=args.eps, min_samples=args.minPts, n_jobs=-1).fit(x) # run DBSCAN
+
+    im2cluster = db.labels_
+    # print(im2cluster)
+    if -1 in im2cluster: # so that noise data is in cluster 0 instead of -1
+        print('help')
+        im2cluster += 1 
+    centroids = im2cluster_to_centroids(x, im2cluster)
+
+    density = np.ones(len(set(im2cluster))) * args.temperature
+
+    wandb.log({'Number of Clusters': len(set(im2cluster))})
+
+    im2cluster = torch.LongTensor(im2cluster).cuda()           
+    print(set(im2cluster.tolist()))
+    density = torch.Tensor(density).cuda()
+    centroids = torch.Tensor(centroids).cuda()
+    centroids = nn.functional.normalize(centroids, p=args.norm_p, dim=1) # hmmmm ? 
+
+    results['centroids'].append(centroids)
+    results['density'].append(density)
+    results['im2cluster'].append(im2cluster)
+
+
+
+    # run dbscan, and then select a random core point from each cluster to be the centroid
     return results

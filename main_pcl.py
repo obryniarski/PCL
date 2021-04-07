@@ -161,14 +161,18 @@ def main_worker(gpu, ngpus_per_node, args):
                 cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda()) 
                 # cluster_result['sampled_protos'].append(torch.zeros(int(num_cluster), len(eval_dataset), args.low_dim).cuda())
                 cluster_result['sampled_protos'].append(torch.zeros(int(args.pcl_r),args.low_dim).cuda())
+            
+        
 
+            clustering_algs = {'kmeans': run_kmeans, 'dbscan': run_dbscan}
 
-            if args.gpu == 0:
-                features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice  
-                features = features.numpy()
-                cluster_result = run_kmeans(features, args)  #run kmeans clustering on master node
-                # save the clustering result
-                # torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
+            # if args.gpu == 0: # I commented this out, it was necessary only for distributed code
+            features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice  
+            features = features.numpy()
+            # cluster_result = run_kmeans(features, args)  #run kmeans clustering on master node
+            cluster_result = clustering_algs[args.clustering](features, args) #run clustering on master node with given clustering alg
+            # save the clustering result
+            # torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
                 
 
             # maybe sample the random negative samples here from all the data in each cluster

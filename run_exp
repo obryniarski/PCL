@@ -16,11 +16,16 @@ echo Running Experiments...
 # --multiprocessing-distributed --world-size 1 --rank 0 --num-cluster  '250, 500, 1000' --exp-dir pcl_cifar10_testing \
 # --pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --proto-sampling --warmup-epoch 1
 
-
+# '350, 500, 1000'
+# usually r is 200
 # baseline, normal PCL
-python main_pcl.py cifar -a resnet50 --lr 0.03 --batch-size 100 --temperature  0.2  --gpu 0 --num-cluster  '350, 500, 1000' --exp-dir pcl_cifar10_TEST \
---pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 3
 
+python main_pcl.py cifar -a resnet50 --lr 0.03 --batch-size 50 --temperature  0.2  --gpu 0 --num-cluster  '350, 500, 1000' --exp-dir pcl_cifar10_smallbatch \
+--pcl-r 50 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 20 --clustering 'kmeans' --eps 0.4 --minPts 10
+
+
+# python main_pcl.py cifar -a mnasnet1_0 --lr 0.03 --batch-size 50 --temperature  0.2  --gpu 0 --num-cluster  '350, 500, 1000' --exp-dir pcl_cifar10_mnasnet_kmeans \
+# --pcl-r 50 --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 20 --clustering 'kmeans' --eps 0.08 --minPts 3
 
 
 # —— Linear Testing Runs ——
@@ -28,18 +33,16 @@ python main_pcl.py cifar -a resnet50 --lr 0.03 --batch-size 100 --temperature  0
 # python eval_cls_imagenet.py cifar --pretrained 'pcl_test_exp/checkpoint_0199.pth.tar' -a resnet50  \
 # --lr 0.05 --batch-size 256 --id cifar_linear -p 50 --gpu 0
 
-<<<<<<< HEAD
-python eval_cls_imagenet.py cifar --pretrained 'pcl_cifar10_baseline/checkpoint_0199.pth.tar' -a resnet50  \
---lr 0.05 --batch-size 256 --id cifar_linear --dist-url 'tcp://localhost:10002' --multiprocessing-distributed \
---world-size 1 --rank 0  -p 50 
-=======
-# python eval_cls_imagenet.py cifar --pretrained 'pcl_cifar10_baseline/checkpoint_0199.pth.tar' -a resnet50  \
-# --lr 0.05 --batch-size 256 --id cifar_linear -p 50 --gpu 0
+
+
+# python eval_cls_imagenet.py cifar --pretrained 'pcl_cifar10_smallbatch/checkpoint_0199.pth.tar' -a resnet50  \
+# --lr 0.05 --batch-size 256 --id cifar_linear -p 50 --gpu 1 --epochs 100
+
+
 
 # python eval_cls_imagenet.py cifar --pretrained 'pcl_cifar10_l1normalize/checkpoint_0199.pth.tar' -a resnet50  \
 # --lr 0.05 --batch-size 256 --id cifar_linear --dist-url 'tcp://localhost:10002' --multiprocessing-distributed \
 # --world-size 1 --rank 0  -p 50 
->>>>>>> 8a52323c1a9ed56a62667a37600731ba5baa1013
 
 # python eval_cls_imagenet.py cifar --pretrained 'pcl_test_exp/checkpoint_0039.pth.tar' -a resnet50  --lr .05 \
 # --batch-size 256 --id cifar_linear --dist-url 'tcp://localhost:10002' --multiprocessing-distributed --world-size \
