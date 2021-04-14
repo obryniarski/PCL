@@ -5,3 +5,5 @@ Linear_eval
 /pcl_test*
 checkpoint*
 wandb
+imgs
+visualized_features*

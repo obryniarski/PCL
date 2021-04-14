@@ -1,0 +1,44 @@
+#!/bin/bash
+
+#python=3.8.8
+#pytorch=1.8.0
+#numpy=1.19.2
+#torchvision=0.9.0
+
+# use pcl_cifar10_testing for saving if and only if I don't care about saving the results.
+
+echo Running Experiments...
+
+gpu=0
+
+
+# hparams=(400 800 1600)
+# hparams=(1 5 15 30 50)
+hparams=(1)
+
+
+exp_notes='hdbscan with proper density calculations, as well as normalizing clustering centroids properly. Not doing InfoNCE loss after warmup at all'
+
+
+# python eval_cls_imagenet.py cifar --pretrained "pcl_cifar10_kmeans_r_200/checkpoint_0199.pth.tar" --exp-name "pcl_cifar10_kmeans_r_200" -a resnet50  \
+# --lr 0.05 --batch-size 256 --id cifar_linear -p 50 --gpu $gpu --epochs 100
+
+for hparam in "${hparams[@]}";do
+
+    # —— Unsupervised Run ——
+
+    exp_name='pcl_cifar10_hdbscan_noInfoNCE_'
+
+    python main_pcl.py cifar -a resnet50 --lr 0.03 --batch-size 50 --temperature  0.2  --gpu $gpu --num-cluster '250' --exp-dir "$exp_name$hparam" --exp-notes "$exp_notes" \
+    --pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 20 --clustering 'dbscan' --eps 0.03 --minPts 200 --minSamples 0
+
+    # echo $((hparam*2))
+
+    # # —— Linear Testing Run ——
+
+    python eval_cls_imagenet.py cifar --pretrained "$exp_name$hparam/checkpoint_0199.pth.tar" --exp-name "$exp_name$hparam" -a resnet50  \
+    --lr 0.05 --batch-size 256 --id cifar_linear -p 50 --gpu $gpu --epochs 100
+
+done
+
+# --- Notes ---

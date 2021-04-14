@@ -77,6 +77,8 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'N processes per node, which has N GPUs. This is the '
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
+parser.add_argument('--exp-name', default='', type=str,
+                            help='experiment name')
 
 parser.add_argument('--pretrained', default='', type=str,
                     help='path to pretrained checkpoint')
@@ -148,7 +150,7 @@ def main_worker(gpu, ngpus_per_node, args):
     #                             world_size=args.world_size, rank=args.rank)
 
     # if torch.distributed.get_rank() == 0:
-    wandb.init(entity='aai', project='Representation Learning', notes='linear classification from supervised imagenet features')
+    wandb.init(entity='aai', project='Representation Learning', notes='linear classification from supervised imagenet features', name = "LinearEval - " + args.exp_name)
     wandb.config.update(args)
 
     # create model

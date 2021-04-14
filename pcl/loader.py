@@ -55,3 +55,25 @@ class CIFAR10Instance(datasets.CIFAR10):
             img = self.transform(img)
         # print(img.shape)
         return img, index
+
+
+class CIFAR10Instance_w_label(datasets.CIFAR10):
+    def __getitem__(self, index):
+        """
+        Args:
+            index (int): Index
+
+        Returns:
+            tuple: (image, index) 
+        """
+        img, target = self.data[index], self.targets[index]
+
+        # doing this so that it is consistent with all other datasets
+        # to return a PIL Image
+        img = Image.fromarray(img)
+
+        # print(img.shape)
+        if self.transform is not None:
+            img = self.transform(img)
+        # print(img.shape)
+        return img, target

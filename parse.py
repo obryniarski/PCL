@@ -86,11 +86,15 @@ class PCL_Parse(argparse.ArgumentParser):
                             help='number of warm-up epochs to only train with InfoNCE loss')
         self.add_argument('--exp-dir', default='experiment_pcl', type=str,
                             help='experiment directory')
-
+        self.add_argument('--exp-notes', default='', type=str,
+                            help='notes for current experiment')
+               
         # extra clustering arguments
         self.add_argument('--clustering', default='kmeans', type=str, 
                             help='clustering algorithm to use for ProtoNCE loss')
         self.add_argument('--eps', default=0.5, type=float,
                             help='epsilon parameter for DBSCAN clustering algorithm')
         self.add_argument('--minPts', default=5, type=int,
-                            help='minPts parameter for DBSCAN clustering algorithm')
+                            help='minPts parameter for DBSCAN/HDBSCAN clustering algorithm')
+        self.add_argument('--minSamples', default=5, type=int,
+                            help='minSamplesparameter for HDBSCAN clustering algorithm')

@@ -4,41 +4,31 @@ import torch.nn as nn
 import torch.distributed as dist
 import numpy as np
 from sklearn.cluster import DBSCAN
+import hdbscan
 
 from tqdm import tqdm
 
 def compute_features(eval_loader, model, args):
     print('Computing features...')
     model.eval()
-    features = torch.zeros(len(eval_loader.dataset),args.low_dim).cuda()
+    features = torch.zeros(len(eval_loader.dataset),args.low_dim).cuda(args.gpu)
     for i, (images, index) in enumerate(tqdm(eval_loader)):
         with torch.no_grad():
-            images = images.cuda(non_blocking=True)
+            images = images.cuda(args.gpu, non_blocking=True)
             feat = model(images,is_eval=True) 
             features[index] = feat
     # dist.barrier()        
     # dist.all_reduce(features, op=dist.ReduceOp.SUM)     
     return features.cpu()
 
-def compute_features(eval_loader, model, low_dim=128):
-    print('Computing features...')
-    model.eval()
-    features = torch.zeros(len(eval_loader.dataset),low_dim).cuda()
-    for i, (images, index) in enumerate(tqdm(eval_loader)):
-        with torch.no_grad():
-            images = images.cuda(non_blocking=True)
-            feat = model(images,is_eval=True) 
-            features[index] = feat
-    # dist.barrier()        
-    # dist.all_reduce(features, op=dist.ReduceOp.SUM)     
-    return features.cpu()
 
 def run_kmeans(x, args):
     """
     Args:
         x: data to be clustered
     """
-    
+    x = x.numpy()
+
     print('performing kmeans clustering')
     results = {'im2cluster':[],'centroids':[],'density':[],'sampled_protos':[]}
     
@@ -106,15 +96,15 @@ def run_kmeans(x, args):
         density = args.temperature*density/density.mean()  #scale the mean to temperature 
         
         # convert to cuda Tensors for broadcast
-        centroids = torch.Tensor(centroids).cuda()
+        centroids = torch.Tensor(centroids).cuda(args.gpu)
         centroids = nn.functional.normalize(centroids, p=args.norm_p, dim=1) # hmmmm ? 
 
         if args.centroid_sampling:
             for i in range(k):
-                sampled_protos[i] = torch.Tensor(sampled_protos[i]).cuda()
+                sampled_protos[i] = torch.Tensor(sampled_protos[i]).cuda(args.gpu)
 
-        im2cluster = torch.LongTensor(im2cluster).cuda()               
-        density = torch.Tensor(density).cuda()
+        im2cluster = torch.LongTensor(im2cluster).cuda(args.gpu)               
+        density = torch.Tensor(density).cuda(args.gpu)
         
         results['centroids'].append(centroids)
         results['density'].append(density)
@@ -136,18 +126,22 @@ def im2cluster_to_centroids(x, im2cluster):
         cluster = im2cluster[idx]
         centroids[cluster] += x[idx]
         counts[cluster] += 1
+    
+    centroids = centroids / np.expand_dims(counts, axis=1) # taking mean of vectors in each cluster
 
-    return centroids / np.expand_dims(counts, axis=1)
+    # normalizing since means won't lie on the unit sphere after taking mean (could be like in the middle, this is especially likely for noise class)
+    centroids = centroids / np.linalg.norm(centroids, axis=1).reshape(-1, 1)
 
-    # returns 
+    return centroids
 
 
-
-
+def l2_distance(x, y):
+    return np.linalg.norm(x - y)
 
 from sklearn.manifold import TSNE, LocallyLinearEmbedding
 import matplotlib.pyplot as plt
 import wandb
+from sklearn.decomposition import PCA
 
 def run_dbscan(x, args):
     # make sure the parser args has the necessary dbscan parameters (eps, minPts) - ADDED
@@ -159,9 +153,9 @@ def run_dbscan(x, args):
     results = {'im2cluster':[],'centroids':[],'density':[],'sampled_protos':[]}
 
 
-    print(x)
-    print( np.linalg.norm(x[0] - x[1], ord=2) )
-    print( np.linalg.norm(x[7] - x[3], ord=2) )
+    # print(x)
+    # print( np.linalg.norm(x[0] - x[1], ord=2) )
+    # print( np.linalg.norm(x[7] - x[3], ord=2) )
 
     # visualizing the data
 
@@ -177,24 +171,79 @@ def run_dbscan(x, args):
 
     # plt.show()
 
-    db = DBSCAN(eps=args.eps, min_samples=args.minPts, n_jobs=-1).fit(x) # run DBSCAN
+    x = x.numpy()
+    pca = PCA(n_components = 20)
+    features = pca.fit_transform(x)
+    # print(pca.explained_variance_ratio_)
 
-    im2cluster = db.labels_
+    # with torch.no_grad():
+    #     x = x.cuda(args.gpu)
+    #     pairwise_d = pairwise_distances(x)
+    # pairwise_d = pairwise_distances(x)
+    # pairwise_d = pairwise_d.numpy()
+
+    # db = DBSCAN(eps=args.eps, min_samples=args.minPts, n_jobs=-1, metric='euclidean').fit(features) # run DBSCAN
+    # im2cluster = db.labels_
+    
+    print(args.minSamples)
+    if args.minSamples:
+        clusterer = hdbscan.HDBSCAN(min_cluster_size=args.minPts, min_samples=args.minSamples)
+    else:
+        clusterer = hdbscan.HDBSCAN(min_cluster_size=args.minPts)
+
+    im2cluster = clusterer.fit_predict(features)
+
     # print(im2cluster)
     if -1 in im2cluster: # so that noise data is in cluster 0 instead of -1
-        print('help')
+        # print('help')
         im2cluster += 1 
     centroids = im2cluster_to_centroids(x, im2cluster)
 
-    density = np.ones(len(set(im2cluster))) * args.temperature
+    # density = np.ones(len(set(im2cluster))) * args.temperature
+
+
+
+    Dcluster = [[] for c in range(len(centroids))]
+    for im,i in enumerate(im2cluster):
+        # Dcluster[i].append(D[im][0])
+        Dcluster[i].append(l2_distance(centroids[i], x[im]))
+
+    # concentration estimation (phi)
+    density = np.zeros(len(centroids))
+    for i,dist in enumerate(Dcluster):
+        if len(dist)>1:
+            density[i] = (np.asarray(dist)).mean()/np.log(len(dist)+10) # i got rid of the **0.5 since then we aren't actually doing l2 distances? idk why the authors did it (tbd)    
+            
+    #if cluster only has one point, use the max to estimate its concentration        
+    dmax = density.max()
+    for i,dist in enumerate(Dcluster):
+        if len(dist)<=1:
+            density[i] = dmax 
+
+    density = density.clip(np.percentile(density,10),np.percentile(density,90)) #clamp extreme values for stability
+    density = args.temperature*density/density.mean()  #scale the mean to temperature 
+
 
     wandb.log({'Number of Clusters': len(set(im2cluster))})
 
-    im2cluster = torch.LongTensor(im2cluster).cuda()           
-    print(set(im2cluster.tolist()))
-    density = torch.Tensor(density).cuda()
-    centroids = torch.Tensor(centroids).cuda()
-    centroids = nn.functional.normalize(centroids, p=args.norm_p, dim=1) # hmmmm ? 
+
+    im2cluster = torch.LongTensor(im2cluster).cuda(args.gpu)   
+
+    unique_clusters = set(im2cluster.tolist())
+    print(unique_clusters)
+    counts = {}
+    for val in im2cluster:
+        counts[val.cpu().item()] = counts.get(val.cpu().item(), 0) + 1
+    print(counts)
+    max_count = max(counts.values())
+    min_count = min(counts.values())
+
+    wandb.log({'Cluster Max/Min ratio': max_count / min_count})
+
+
+    density = torch.Tensor(density).cuda(args.gpu)
+    centroids = torch.Tensor(centroids).cuda(args.gpu)
+    # centroids = nn.functional.normalize(centroids, p=args.norm_p, dim=1) # hmmmm ? 
 
     results['centroids'].append(centroids)
     results['density'].append(density)

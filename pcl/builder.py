@@ -7,7 +7,7 @@ class MoCo(nn.Module):
     Build a MoCo model with: a query encoder, a key encoder, and a queue
     https://arxiv.org/abs/1911.05722
     """
-    def __init__(self, base_encoder, dim=128, r=16384, m=0.999, T=0.1, mlp=False, proto_sampling=False, p=2):
+    def __init__(self, base_encoder, dim=128, r=16384, m=0.999, T=0.1, mlp=False, proto_sampling=False, p=2, gpu=0):
         """
         dim: feature dimension (default: 128)
         r: queue size; number of negative samples/prototypes (default: 16384)
@@ -23,6 +23,7 @@ class MoCo(nn.Module):
         self.m = m
         self.T = T
         self.dim = dim
+        self.gpu = gpu
 
         self.proto_sampling = proto_sampling
         self.p = p
@@ -79,7 +80,7 @@ class MoCo(nn.Module):
         """
         batch_size_this = x.shape[0]
         
-        idx_shuffle = torch.randperm(batch_size_this).cuda()
+        idx_shuffle = torch.randperm(batch_size_this).cuda(self.gpu)
         idx_unshuffle = torch.argsort(idx_shuffle)
 
         idx_this = idx_shuffle.view(-1)
@@ -96,7 +97,7 @@ class MoCo(nn.Module):
         return x[idx_this]
 
 
-    def select_prototypes(self, prototypes, lengths, im2cluster, index):
+    def select_prototypes(self, prototypes, im2cluster, index):
         """
         Selects the positive and negative prototypes for use in forward method.
         """
@@ -104,21 +105,8 @@ class MoCo(nn.Module):
         # sample positive prototypes
         pos_proto_id = im2cluster[index] # 1-dim torch tensor mapping image index -> cluster
 
-        if self.proto_sampling:
-            i = sample(range(len(prototypes[pos_proto_id])), 1) # there are multiple elements in the positive cluster, pick a random 1
 
-            selected_indices = []
-            for ind in index:
-                cur_len = lengths[im2cluster[ind]].item()
-                selected_int = torch.randint(0, cur_len).item()
-                selected_indices.append(selected_int)
-            selected_indices = torch.LongTensor(selected_indices)
-            print(selected_indices.shape)
-            pos_prototypes = prototypes[index, selected_indices]
-            print(pos_prototypes.shape)
-
-        else:
-            pos_prototypes = prototypes[pos_proto_id] 
+        pos_prototypes = prototypes[pos_proto_id] 
         
         # sample negative prototypes
         all_proto_id = [i for i in range(im2cluster.max())]     # list of all possible cluster id's
@@ -126,26 +114,18 @@ class MoCo(nn.Module):
         # all_proto_id = torch.unique(im2cluster).tolist() # list of all possible cluster id's
         # print('2', all_proto_id)
 
-        if self.proto_sampling:
-            neg_proto_id = list(set(all_proto_id)-set(pos_proto_id.tolist()))
-            neg_proto_id = choices(neg_proto_id, k=self.r) # sample r negative prototypes with replacement
-            neg_prototypes = torch.zeros((self.r, self.dim))
-            for i in range(self.r): 
-                cur_proto_id = neg_proto_id[i]
-                cur_len = lengths[cur_proto_id]
-                # selected_index = sample(range(prototypes[neg_proto_id[i]]), 1) # pick a random index of all the elements in the selected cluster
-                selected_index = torch.randint(0, cur_len).item()
-                neg_prototypes[i] = prototypes[neg_proto_id[i]][selected_index] # choose that cluster as a negative prototype
 
-        else:
-            # print(set(all_proto_id))
-            # print(set(pos_proto_id.tolist()))
-            # print(pos_proto_id)
-            # print(all_proto_id)
-            neg_proto_id = set(all_proto_id)-set(pos_proto_id.tolist())
-            # print(neg_proto_id)
-            neg_proto_id = sample(neg_proto_id,self.r) # sample r negative prototypes 
-            neg_prototypes = prototypes[neg_proto_id]
+        # print(set(all_proto_id))
+        # print(set(pos_proto_id.tolist()))
+        # print(pos_proto_id)
+        # print(all_proto_id)
+        # neg_proto_id = set(all_proto_id)-set(pos_proto_id.tolist())
+        # # print(neg_proto_id)
+        # neg_proto_id = sample(neg_proto_id,self.r) # sample r negative prototypes 
+        # neg_prototypes = prototypes[neg_proto_id]
+
+        neg_proto_id = all_proto_id[:self.r] # take the first r classes, or all of them if there are less
+        neg_prototypes = prototypes[neg_proto_id]
 
         proto_selected = torch.cat([pos_prototypes,neg_prototypes],dim=0)
         return proto_selected, pos_proto_id, neg_proto_id
@@ -202,7 +182,7 @@ class MoCo(nn.Module):
         logits /= self.T
 
         # labels: positive key indicators
-        labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
+        labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda(self.gpu)
 
         # dequeue and enqueue
         self._dequeue_and_enqueue(k)
@@ -223,25 +203,36 @@ class MoCo(nn.Module):
 
             for n, (im2cluster,prototypes,density) in sampler:
 
-                lengths = None # THIS IS A PLACEHOLDER, PROTO_SAMPLING=TRUE WONT WORK WITH THIS HERE
-                proto_selected, pos_proto_id, neg_proto_id = self.select_prototypes(prototypes, lengths, im2cluster, index) #NEED TO GET LENGTHS HERE SOMEHOW
+                # lengths = None # THIS IS A PLACEHOLDER, PROTO_SAMPLING=TRUE WONT WORK WITH THIS HERE
+                proto_selected, pos_proto_id, neg_proto_id = self.select_prototypes(prototypes, im2cluster, index) #NEED TO GET LENGTHS HERE SOMEHOW
                 # proto_selected.shape = [N, C]
 
                 # I FIXED THIS PART -------------------------
                 # compute prototypical logits
-                logits_proto = torch.mm(q,proto_selected.t()) # q is NxC and proto_selected.t() is Cx(N+r)
+                logits_proto = torch.mm(q,proto_selected.t()) # q is NxC and proto_selected.t() is Cx(N+r) (actually Cx min(N+r, N+num_clusters))
                 # scaling temperatures for the selected prototypes
-                temp_proto = density[torch.cat([pos_proto_id,torch.LongTensor(neg_proto_id).cuda()],dim=0)]  
+                temp_proto = density[torch.cat([pos_proto_id,torch.LongTensor(neg_proto_id).cuda()],dim=0)] #neg_proto_id should just be like the first min(pcl_r, num_clusters) values 
                 logits_proto /= temp_proto
 
                 # we want to turn the left CxN matrix into just a single column of its diagonal
-                pos_logits = torch.diag(logits_proto, 0) 
-                logits_proto = torch.cat([pos_logits.view(pos_logits.shape[0], 1), logits_proto[:, pos_logits.shape[0]:]], dim=1)
-                
+                pos_logits = torch.diag(logits_proto, 0).view(-1, 1)
+                neg_logits = logits_proto[:, pos_logits.shape[0]:] # shape is Nx min(r, num_clusters)
+
+
+                # zero out any logits corresponding to the positive class in a given row
+                mask = torch.ones_like(neg_logits)
+                for i in range(len(mask)):
+                    if pos_proto_id[i] < mask.shape[1]:
+                        mask[i, pos_proto_id[i]] -= 1
+                neg_logits = torch.einsum('nr, nr -> nr', [neg_logits, mask])
+
+                # logits_proto = torch.cat([pos_logits.view(pos_logits.shape[0], 1), neg_logits, dim=1)
+                logits_proto = torch.cat([pos_logits, neg_logits], dim=1)
+
 
                 # targets for prototype assignment
                 # labels_proto = torch.linspace(0, q.size(0)-1, steps=q.size(0)).long().cuda() # basically range(0, q.size(0)) but in pytorch
-                labels_proto = torch.zeros(logits_proto.shape[0], dtype=torch.long).cuda()
+                labels_proto = torch.zeros(logits_proto.shape[0], dtype=torch.long).cuda(self.gpu)
 
                 # print("NEW --------", labels_proto)
                 # I FIXED THIS PART -------------------------

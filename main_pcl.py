@@ -82,7 +82,7 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
 
-    wandb.init(entity='aai', project='Representation Learning', notes='random sampling from clusters for prototypes instead of clusters')
+    wandb.init(entity='aai', project='Representation Learning', name = "unsupervised - " + args.exp_dir, notes=args.exp_notes)
     wandb.config.update(args)
 
     # create model
@@ -90,7 +90,7 @@ def main_worker(gpu, ngpus_per_node, args):
     model = pcl.builder.MoCo(
         models.__dict__[args.arch],
         args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, args.centroid_sampling, 
-        args.norm_p)
+        args.norm_p, gpu=args.gpu)
     # print(model)
 
     
@@ -110,6 +110,15 @@ def main_worker(gpu, ngpus_per_node, args):
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
+
+    # optimizer = torch.optim.Adam(model.parameters(), args.lr,
+    #                             betas=(0.9, 0.999),
+    #                             weight_decay=args.weight_decay)
+    
+    # try adam
+    # remove momentum after every opoch maybe, maybe remove it completely - maybe reset
+    # do more iterations between clustering, 
+    # normalize somehow based on the number of clusters
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -150,17 +159,22 @@ def main_worker(gpu, ngpus_per_node, args):
         
         cluster_result = None
         if epoch>=args.warmup_epoch:
+
+            optimizer = torch.optim.SGD(model.parameters(), args.lr,
+                                momentum=args.momentum,
+                                weight_decay=args.weight_decay) # resetting the momentum of the optimizer if we are doing clustering, since it adds so much variance
+
             # compute momentum features for center-cropped images
             features = compute_features(eval_loader, model, args)         
             
             # placeholder for clustering result
             cluster_result = {'im2cluster':[],'centroids':[],'density':[],'sampled_protos':[]}
             for num_cluster in args.num_cluster:
-                cluster_result['im2cluster'].append(torch.zeros(len(eval_dataset),dtype=torch.long).cuda())
-                cluster_result['centroids'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
-                cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda()) 
-                # cluster_result['sampled_protos'].append(torch.zeros(int(num_cluster), len(eval_dataset), args.low_dim).cuda())
-                cluster_result['sampled_protos'].append(torch.zeros(int(args.pcl_r),args.low_dim).cuda())
+                cluster_result['im2cluster'].append(torch.zeros(len(eval_dataset),dtype=torch.long).cuda(args.gpu))
+                cluster_result['centroids'].append(torch.zeros(int(num_cluster),args.low_dim).cuda(args.gpu))
+                cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda(args.gpu)) 
+                # cluster_result['sampled_protos'].append(torch.zeros(int(num_cluster), len(eval_dataset), args.low_dim).cuda(args.gpu))
+                cluster_result['sampled_protos'].append(torch.zeros(int(args.pcl_r),args.low_dim).cuda(args.gpu))
             
         
 
@@ -168,7 +182,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
             # if args.gpu == 0: # I commented this out, it was necessary only for distributed code
             features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice  
-            features = features.numpy()
+            # features = features.numpy()
             # cluster_result = run_kmeans(features, args)  #run kmeans clustering on master node
             cluster_result = clustering_algs[args.clustering](features, args) #run clustering on master node with given clustering alg
             # save the clustering result
@@ -221,7 +235,12 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
         output, target, output_proto, target_proto = model(im_q=images[0], im_k=images[1], cluster_result=cluster_result, index=index)
 
         # InfoNCE loss
-        loss = criterion(output, target)  
+        # loss = criterion(output, target) # this is the original
+
+        # if output_proto is None: # seeing what happens if we don't use infoNCE loss during clustering
+        loss = criterion(output, target)
+        # else:
+            # loss = torch.tensor([0], dtype=torch.float).cuda(args.gpu)
 
         wandb.log({'InfoNCE Loss': loss.cpu().item()})
         
