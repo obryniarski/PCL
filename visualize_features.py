@@ -116,7 +116,31 @@ def load_data(data='cifar', aug_plus=True):
 
     return train_dataset, eval_dataset
 
-def run_dbscan(x, eps=0.4, minPts=10, temperature=0.2):
+def im2cluster_to_centroids(x, im2cluster):
+    # returns an np.ndarray of c_i, where each c_i is the mean of all inputs with cluster i
+
+    centroids = np.zeros((max(im2cluster) + 1, len(x[0]))) # (num_clusters, C)
+
+    # unique_clusters = set(im2cluster)
+    counts = np.zeros(max(im2cluster) + 1) # (num_clusters)
+
+    for idx in range(len(x)):
+        cluster = im2cluster[idx]
+        centroids[cluster] += x[idx]
+        counts[cluster] += 1
+    
+    centroids = centroids / np.expand_dims(counts, axis=1) # taking mean of vectors in each cluster
+
+    # normalizing since means won't lie on the unit sphere after taking mean (could be like in the middle, this is especially likely for noise class)
+    centroids = centroids / np.linalg.norm(centroids, axis=1).reshape(-1, 1)
+
+    return centroids
+
+def l2_distance(x, y):
+    return np.linalg.norm(x - y)
+
+
+def run_dbscan(x, minPts=200, minSamples=0, temperature=0.2):
     # make sure the parser args has the necessary dbscan parameters (eps, minPts) - ADDED
 
     # x = x.numpy() # this is already done before calling the function
@@ -126,31 +150,66 @@ def run_dbscan(x, eps=0.4, minPts=10, temperature=0.2):
     results = {'im2cluster':[],'centroids':[],'density':[],'sampled_protos':[]}
 
 
-    db = DBSCAN(eps=eps, min_samples=minPts, n_jobs=-1).fit(x) # run DBSCAN
+    # x = x.numpy()
+    pca = PCA(n_components = 20)
+    features = pca.fit_transform(x)
+    # print(pca.explained_variance_ratio_)
 
-    im2cluster = db.labels_
-    # print(im2cluster)
+    # db = DBSCAN(eps=args.eps, min_samples=args.minPts, n_jobs=-1, metric='euclidean').fit(features) # run DBSCAN
+    # im2cluster = db.labels_
+
+    if minSamples:
+        clusterer = hdbscan.HDBSCAN(min_cluster_size=minPts, min_samples=minSamples)
+    else:
+        clusterer = hdbscan.HDBSCAN(min_cluster_size=minPts)
+
+    im2cluster = clusterer.fit_predict(features)
+    
+
     if -1 in im2cluster: # so that noise data is in cluster 0 instead of -1
-        print('help')
         im2cluster += 1 
     centroids = im2cluster_to_centroids(x, im2cluster)
 
-    density = np.ones(len(set(im2cluster))) * temperature
+    # density = np.ones(len(set(im2cluster))) * args.temperature
 
-    im2cluster = torch.LongTensor(im2cluster).cuda()           
-    print(set(im2cluster.tolist()))
-    density = torch.Tensor(density).cuda()
-    centroids = torch.Tensor(centroids).cuda()
-    centroids = nn.functional.normalize(centroids, p=2, dim=1) # hmmmm ? 
+    Dcluster = [[] for c in range(len(centroids))]
+    for im,i in enumerate(im2cluster):
+        # Dcluster[i].append(D[im][0])
+        Dcluster[i].append(l2_distance(centroids[i], x[im]))
+
+    # concentration estimation (phi)
+    density = np.zeros(len(centroids))
+    for i,dist in enumerate(Dcluster):
+        if len(dist)>1:
+            density[i] = (np.asarray(dist)).mean()/np.log(len(dist)+10) # i got rid of the **0.5 since then we aren't actually doing l2 distances? idk why the authors did it (tbd)    
+            
+    #if cluster only has one point, use the max to estimate its concentration        
+    dmax = density.max()
+    for i,dist in enumerate(Dcluster):
+        if len(dist)<=1:
+            density[i] = dmax 
+
+    density = density.clip(np.percentile(density,10),np.percentile(density,90)) #clamp extreme values for stability
+    density = temperature*density/density.mean()  #scale the mean to temperature 
+
+
+    im2cluster = torch.LongTensor(im2cluster).cuda(gpu)   
+
+    unique_clusters = set(im2cluster.tolist())
+    print(unique_clusters)
+
+    density = torch.Tensor(density).cuda(gpu)
+    centroids = torch.Tensor(centroids).cuda(gpu)
+    # centroids = nn.functional.normalize(centroids, p=args.norm_p, dim=1) # hmmmm ? 
 
     results['centroids'].append(centroids)
     results['density'].append(density)
     results['im2cluster'].append(im2cluster)
 
-
-
     # run dbscan, and then select a random core point from each cluster to be the centroid
     return results
+
+    # density = np.ones(len(set(im2cluster))) * args.temperature
 
 def run_kmeans(x, num_cluster=['250'], centroid_sampling=False, temperature=0.2):
     """
@@ -243,56 +302,6 @@ def run_kmeans(x, num_cluster=['250'], centroid_sampling=False, temperature=0.2)
         
     return results
     
-    
-low_dim=128
-pcl_r=100
-moco_m=0.999
-temperature=0.2
-mlp=True
-centroid_sampling=False
-norm_p = 2
-
-arch = 'resnet50'
-
-print("=> creating model '{}'".format(arch))
-model = pcl.builder.MoCo(
-    models.__dict__[arch],
-    low_dim, pcl_r, moco_m, temperature, mlp, centroid_sampling, 
-    norm_p)
-
-gpu = 1
-model = model.cuda(gpu)
-
-# checkpoint_id=['dbscan_eps_point8_minpts_128','0199']
-# checkpoint_id=['dbscan_eps_point41_minpts_128','0019']
-# checkpoint_id=['kmeans_r_100','0019']
-# checkpoint_id=['kmeans_r_200','0199']
-checkpoint_id=['kmeans_batchsize_50','0019']
-# checkpoint_id=['hdbscan_minpts_200','0019']
-# checkpoint_id=['InfoNCE','0109']
-# checkpoint_id=['hdbscan_minsamples_5','0199']
-# checkpoint_id=['hdbscan_density_fixed_1','0199']
-
-
-
-# checkpoint_id=['dbscan','0199']
-
-checkpoint = torch.load('pcl_cifar10_{}/checkpoint_{}.pth.tar'.format(checkpoint_id[0], checkpoint_id[1]))
-model.load_state_dict(checkpoint['state_dict'])
-
-batch_size = 256
-workers = 8
-
-
-train_dataset, eval_dataset = load_data(data='cifar', aug_plus=True)
-train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True,
-        num_workers=workers, pin_memory=True, sampler=None, drop_last=True)
-# dataloader for center-cropped images, use larger batch size to increase speed
-eval_loader = torch.utils.data.DataLoader(
-    eval_dataset, batch_size=batch_size*5, shuffle=True,
-    sampler=None, num_workers=workers, pin_memory=True)
-
 
 
 def calculate_kn_distance(X,k):
@@ -361,6 +370,8 @@ def plot_tsne(num_classes=20, num_samples=10000):
     fig.savefig(save_path)
     print('Figure saved to : {}'.format(save_path))
 
+
+
 def plot_umap(num_classes=20, num_samples=10000):
 
     features, classes = compute_features(eval_loader, model, low_dim=low_dim, gpu=gpu)
@@ -398,16 +409,26 @@ def plot_umap(num_classes=20, num_samples=10000):
     ax.figure.savefig(save_path)
     print('Figure saved to : {}'.format(save_path))
 
-def plot_umap_progression(num_classes=20, num_samples=10000):
+
+def plot_progression(checkpoint_id, num_rows=3, num_progressions=9, num_classes=20, num_samples=10000, algorithm = 'umap', true_classes=True):
 
 
-    epochs = ['0009', '0029', '0049', '0069', '0089' ,'0109', '0129', '0149', '0169', '0189', '0199']
+    checkpoints = os.listdir('pcl_cifar10_{}'.format(checkpoint_id[0]))
+    checkpoints.sort()
+    assert num_progressions <= len(checkpoints), 'Not enough checkpoints saved.'
+    checkpoints = [checkpoints[i] for i in range(0, len(checkpoints), len(checkpoints) // (num_progressions-1))][:num_progressions-1] + [checkpoints[-1]]
 
-    fig, axes = plt.subplots(3, len(epochs)//3 + 1, figsize=(40,25))
+    fig, axes = plt.subplots(num_rows, len(checkpoints)//num_rows + 1 if len(checkpoints) % num_rows != 0 else len(checkpoints)//num_rows, figsize=(40,25))
 
-    for i, epoch in enumerate(epochs):
+    print(checkpoints)
+
+    for i, checkpoint_file in enumerate(checkpoints):
+        # print(checkpoints)
+        # print(checkpoint_file)
+        epoch = checkpoint_file[11:15] # just the 4-digit checkpoint epoch
+
         print('epoch: {}'.format(epoch))
-        checkpoint = torch.load('pcl_cifar10_{}/checkpoint_{}.pth.tar'.format(checkpoint_id[0], epoch))
+        checkpoint = torch.load('pcl_cifar10_{}/{}'.format(checkpoint_id[0], checkpoint_file))
         model.load_state_dict(checkpoint['state_dict'])
         features, classes = compute_features(eval_loader, model, low_dim=low_dim, gpu=gpu)
         features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice  
@@ -418,24 +439,100 @@ def plot_umap_progression(num_classes=20, num_samples=10000):
         features = features[:num_samples]
         restricted_classes = restricted_classes[:num_samples]
 
-        reducer = umap.UMAP(n_neighbors = 30, min_dist=0.1, n_components=2, metric='cosine')
-
-        y = reducer.fit_transform(features)
-
-        # ax = umap.plot.points(reducer, labels=restricted_classes)
-        axes.flat[i+1].scatter(y[:, 0], y[:, 1], c = restricted_classes, cmap='Spectral', s=3)
-
-        axes.flat[i+1].set_title('epoch: {}'.format(epoch))
+        if algorithm == 'umap':
+            reducer = umap.UMAP(n_neighbors = 60, min_dist=0.1, n_components=2, metric='cosine')
+            y = reducer.fit_transform(features)
+        elif algorithm == 'tsne':
+            tsne = cudaTSNE(n_components=2, perplexity=50, learning_rate=600, verbose=1, n_iter=2500, metric='euclidean')
+            y = tsne.fit_transform(features)
 
 
-    if not os.path.exists('imgs/umap_{}'.format(checkpoint_id[0])):
-        os.makedirs('imgs/umap_{}'.format(checkpoint_id[0]))
+        if true_classes:
+            scatter = axes.flat[i].scatter(y[:, 0], y[:, 1], c = restricted_classes, cmap='Spectral', s=3)
+        else:
+            with torch.no_grad():
+                results = run_dbscan(features, minPts=50, minSamples=0, temperature=0.2)
+                im2cluster = results['im2cluster'][0].tolist() # remember to turn this back to a list
+            scatter = axes.flat[i].scatter(y[:, 0], y[:, 1], c = im2cluster, cmap='Spectral', s=3) # restricting num_classes does not work here
+
+
+        # legend = axes.flat[i].legend(*scatter.legend_elements(), loc='lower left', title="Classes")
+        # axes.flat[i].add_artist(legend)
+
+        axes.flat[i].set_title('epoch: {}'.format(epoch))
     
-    save_path = 'imgs/umap_{}/{}'.format(checkpoint_id[0], 'progression')
+    axes.flat[-1].legend(*scatter.legend_elements(), loc='lower left', title="Classes", bbox_to_anchor=(1.00, 0), prop={'size': 25})
+    fig.suptitle('{}_{}: {}'.format(algorithm, checkpoint_id[0], 'Cifar Classes' if true_classes else 'Clustering Classes'), fontsize=20)
+
+    if not os.path.exists('imgs/{}_{}'.format(algorithm, checkpoint_id[0])):
+        os.makedirs('imgs/{}_{}'.format(algorithm, checkpoint_id[0]))
+    save_path = 'imgs/{}_{}/{}_{}'.format(algorithm, checkpoint_id[0], 'progression', 'true_classes' if true_classes else 'cluster_classes')
 
 
     fig.savefig(save_path)
     print('Figure saved to : {}'.format(save_path))
+
+def plot_comparison(checkpoint_id, num_progressions=5, num_classes=20, num_samples=10000, algorithm = 'umap'):
+
+    checkpoints = os.listdir('pcl_cifar10_{}'.format(checkpoint_id[0]))
+    checkpoints.sort()
+    assert num_progressions <= len(checkpoints), 'Not enough checkpoints saved.'
+    checkpoints = [checkpoints[i] for i in range(0, len(checkpoints), len(checkpoints) // (num_progressions-1))][:num_progressions-1] + [checkpoints[-1]]
+
+    fig, axes = plt.subplots(len(checkpoints), 2, figsize=(30,50))
+
+    print(checkpoints)
+
+    for i, checkpoint_file in enumerate(checkpoints):
+        # print(checkpoints)
+        # print(checkpoint_file)
+        epoch = checkpoint_file[11:15] # just the 4-digit checkpoint epoch
+
+        print('epoch: {}'.format(epoch))
+        checkpoint = torch.load('pcl_cifar10_{}/{}'.format(checkpoint_id[0], checkpoint_file))
+        model.load_state_dict(checkpoint['state_dict'])
+        features, classes = compute_features(eval_loader, model, low_dim=low_dim, gpu=gpu)
+        features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice  
+        features = features.numpy()
+        restricted_classes = np.array([i for i in classes if i < num_classes])
+        features = features[np.array(classes) < num_classes]
+
+        features = features[:num_samples]
+        restricted_classes = restricted_classes[:num_samples]
+
+        if algorithm == 'umap':
+            reducer = umap.UMAP(n_neighbors = 60, min_dist=0.1, n_components=2, metric='cosine')
+            y = reducer.fit_transform(features)
+        elif algorithm == 'tsne':
+            tsne = cudaTSNE(n_components=2, perplexity=50, learning_rate=600, verbose=1, n_iter=2500, metric='euclidean')
+            y = tsne.fit_transform(features)
+
+
+        scatter = axes.flat[2*i].scatter(y[:, 0], y[:, 1], c = restricted_classes, cmap='Spectral', s=3)
+        with torch.no_grad():
+            results = run_dbscan(features, minPts=200, minSamples=0, temperature=0.2)
+            im2cluster = results['im2cluster'][0].tolist() # remember to turn this back to a list
+        scatter = axes.flat[2*i + 1].scatter(y[:, 0], y[:, 1], c = im2cluster, cmap='Spectral', s=3) # restricting num_classes does not work here
+
+
+        # legend = axes.flat[i].legend(*scatter.legend_elements(), loc='lower left', title="Classes")
+        # axes.flat[i].add_artist(legend)
+
+        axes.flat[2*i].set_title('Cifar Classes, epoch: {}'.format(epoch))
+        axes.flat[2*i + 1].set_title('Clustering Classes, epoch: {}'.format(epoch))
+
+    
+    # axes.flat[-1].legend(*scatter.legend_elements(), loc='lower left', title="Classes", bbox_to_anchor=(1.00, 0), prop={'size': 25})
+    fig.suptitle('{}_{} Comparison'.format(algorithm, checkpoint_id[0]), fontsize=50)
+
+    if not os.path.exists('imgs/{}_{}'.format(algorithm, checkpoint_id[0])):
+        os.makedirs('imgs/{}_{}'.format(algorithm, checkpoint_id[0]))
+    save_path = 'imgs/{}_{}/comparison'.format(algorithm, checkpoint_id[0])
+
+
+    fig.savefig(save_path)
+    print('Figure saved to : {}'.format(save_path))
+
 
 def plot_knn(x, k=127, num=1000):
 
@@ -489,11 +586,67 @@ def plot_knn2(x, k=127, num=1000):
 
 from time import time
 
+    
+low_dim=128
+pcl_r=200
+moco_m=0.999
+temperature=0.2
+mlp=True
+centroid_sampling=False
+norm_p = 2
+
+arch = 'resnet50'
+
+print("=> creating model '{}'".format(arch))
+model = pcl.builder.MoCo(
+    models.__dict__[arch],
+    low_dim, pcl_r, moco_m, temperature, mlp, centroid_sampling, 
+    norm_p)
+
+gpu = 0
+model = model.cuda(gpu)
+
+
+# checkpoint = torch.load('pcl_cifar10_{}/checkpoint_{}.pth.tar'.format(checkpoint_id[0], checkpoint_id[1]))
+# model.load_state_dict(checkpoint['state_dict'])
+
+batch_size = 256
+workers = 8
+
+
+train_dataset, eval_dataset = load_data(data='cifar', aug_plus=True)
+train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True,
+        num_workers=workers, pin_memory=True, sampler=None, drop_last=True)
+# dataloader for center-cropped images, use larger batch size to increase speed
+eval_loader = torch.utils.data.DataLoader(
+    eval_dataset, batch_size=batch_size*5, shuffle=True,
+    sampler=None, num_workers=workers, pin_memory=True)
+
+
+# checkpoint_id=['dbscan_eps_point8_minpts_128','0199']
+# checkpoint_id=['dbscan_eps_point41_minpts_128','0019']
+# checkpoint_id=['kmeans_r_100','0019']
+# checkpoint_id=['kmeans_r_200','0199']
+# checkpoint_id=['kmeans_batchsize_50','0019']
+# checkpoint_id=['hdbscan_minpts_200','0019']
+# checkpoint_id=['InfoNCE','0109']
+# checkpoint_id=['hdbscan_minsamples_5','0199']
+# checkpoint_id=['hdbscan_density_fixed_1','0199']
+# checkpoint_id=['hdbscan','0019']
+# checkpoint_id=['kmeans','0019']
+checkpoint_id=['InfoNCE','0019']
+
+
+
 start_time = time()
 # plot_knn2(features, 127)
 # plot_tsne(num_classes=20, num_samples=50000)
 # plot_umap(num_classes=20, num_samples=50000)
-plot_umap_progression(num_classes=20, num_samples=50000)
+# plot_umap_progression(num_classes=20, num_samples=50000)
+plot_progression(checkpoint_id, num_rows=3, num_progressions=15, num_classes=20, num_samples=50000, algorithm='umap', true_classes=True)
+# plot_comparison(checkpoint_id, num_progressions=5, num_classes=20, num_samples=50000, algorithm = 'umap')
+
 
 
 end_time = time()

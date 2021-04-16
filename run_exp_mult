@@ -27,7 +27,7 @@ for hparam in "${hparams[@]}";do
 
     # —— Unsupervised Run ——
 
-    exp_name='pcl_cifar10_hdbscan_noInfoNCE_'
+    exp_name='pcl_cifar10_hdbscan_hdbscan_converge'
 
     python main_pcl.py cifar -a resnet50 --lr 0.03 --batch-size 50 --temperature  0.2  --gpu $gpu --num-cluster '250' --exp-dir "$exp_name$hparam" --exp-notes "$exp_notes" \
     --pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 20 --clustering 'dbscan' --eps 0.03 --minPts 200 --minSamples 0

@@ -404,9 +404,9 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         optimizer.step()
 
         # if torch.distributed.get_rank() == 0:
-        wandb.log({'Linear - Train Loss': loss.cpu().item(), 
-                            'Linear - Train Acc@1': acc1.cpu().item(),
-                            'Linear - Train Acc@5': acc5.cpu().item()})
+        # wandb.log({'Linear - Train Loss': loss.cpu().item(), 
+        #                     'Linear - Train Acc@1': acc1.cpu().item(),
+        #                     'Linear - Train Acc@5': acc5.cpu().item()})
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -414,6 +414,10 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         if i % args.print_freq == 0:
             progress.display(i)
+            
+    wandb.log({'Linear - Train Loss': losses.avg, 
+                            'Linear - Train Acc@1': top1.avg,
+                            'Linear - Train Acc@5': top5.avg})
 
 
 def validate(val_loader, model, criterion, args, epoch):
@@ -450,9 +454,9 @@ def validate(val_loader, model, criterion, args, epoch):
 
             # if torch.distributed.get_rank() == 0:
             #     
-            wandb.log({'Linear - Val. Loss': loss.cpu().item(), 
-                            'Linear - Val. Acc@1': acc1.cpu().item(),
-                            'Linear - Val. Acc@5': acc5.cpu().item()})
+            # wandb.log({'Linear - Val. Loss': loss.cpu().item(), 
+            #                 'Linear - Val. Acc@1': acc1.cpu().item(),
+            #                 'Linear - Val. Acc@5': acc5.cpu().item()})
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -464,6 +468,11 @@ def validate(val_loader, model, criterion, args, epoch):
         # TODO: this should also be done with the ProgressMeter
         print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
+        
+        wandb.log({'Linear - Val. Loss': losses.avg, 
+                'Linear - Val. Acc@1': top1.avg,
+                'Linear - Val. Acc@5': top5.avg})
+
     # if args.gpu==0:    
     #     logger.log_value('test_acc', top1.avg, epoch)
     #     logger.log_value('test_acc5', top5.avg, epoch)

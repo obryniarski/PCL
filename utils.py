@@ -10,6 +10,14 @@ from torch.nn import functional as F
 import pcl.loader
 
 
+def freeze_parameters(model, freeze_fc = False):
+    # freezes all the parameters of the given model, except for the fully connected layers if include_fc=False
+    # must get rid of any naming prefixes (i.e. so fc layer isn't named 'encoder.fc.weights)
+
+    for name, parameter in model.name_parameters():
+        parameter.requires_grad = False if (name[:2] != 'fc') or (name[:2] == 'fc' and freeze_fc) else True
+
+            
 
 
 def padded_cat(tensor_list):
