@@ -146,45 +146,141 @@ def load_data(args):
     eval_dataset : torch.utils.data.Dataset
         torch dataset for evaluation data
     """
-    if args.data == 'cifar':
+    # if args.data == 'cifar':
 
         # Data loading code
         # traindir = os.path.join(args.data, 'train')
-        normalize = transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],
-                                        std=[0.247, 0.243, 0.261])
+        # normalize = transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],
+        #                                 std=[0.247, 0.243, 0.261])
         
-        if args.aug_plus:
-            # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
-            augmentation = [
-                transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
-                transforms.RandomApply([
-                    transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
-                ], p=0.8),
-                transforms.RandomGrayscale(p=0.2),
-                transforms.RandomApply([pcl.loader.GaussianBlur([.1, 2.])], p=0.5),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize
-            ]
-        else:
-            # MoCo v1's aug: same as InstDisc https://arxiv.org/abs/1805.01978
-            augmentation = [
-                transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
-                transforms.RandomGrayscale(p=0.2),
-                transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize
-            ]
+        # if args.aug_plus:
+        #     # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
+        #     augmentation = [
+        #         transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
+        #         transforms.RandomApply([
+        #             transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+        #         ], p=0.8),
+        #         transforms.RandomGrayscale(p=0.2),
+        #         transforms.RandomApply([pcl.loader.GaussianBlur([.1, 2.])], p=0.5),
+        #         transforms.RandomHorizontalFlip(),
+        #         transforms.ToTensor(),
+        #         normalize
+        #     ]
+        # else:
+        #     # MoCo v1's aug: same as InstDisc https://arxiv.org/abs/1805.01978
+        #     augmentation = [
+        #         transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
+        #         transforms.RandomGrayscale(p=0.2),
+        #         transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
+        #         transforms.RandomHorizontalFlip(),
+        #         transforms.ToTensor(),
+        #         normalize
+        #     ]
             
-        # center-crop augmentation 
-        eval_augmentation = transforms.Compose([
-            transforms.Resize(32),
-            transforms.CenterCrop(32),
+        # # center-crop augmentation 
+        # eval_augmentation = transforms.Compose([
+        #     transforms.Resize(32),
+        #     transforms.CenterCrop(32),
+        #     transforms.ToTensor(),
+        #     normalize
+        #     ])  
+
+        # train_dataset = pcl.loader.CIFAR10Instance(
+        #     'data', train=True,
+        #     transform=pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)), download=True)
+        # eval_dataset = pcl.loader.CIFAR10Instance(
+        #     'data', train=True,
+        #     transform=eval_augmentation, download=True)
+    # else:
+
+        # Data loading code
+        # train_dataset, eval_dataset = load_data(args)
+
+        # traindir = os.path.join(args.data, 'train')
+        # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+        #                                 std=[0.229, 0.224, 0.225])
+        
+        # if args.aug_plus:
+        #     # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
+        #     augmentation = [
+        #         transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+        #         transforms.RandomApply([
+        #             transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+        #         ], p=0.8),
+        #         transforms.RandomGrayscale(p=0.2),
+        #         transforms.RandomApply([pcl.loader.GaussianBlur([.1, 2.])], p=0.5),
+        #         transforms.RandomHorizontalFlip(),
+        #         transforms.ToTensor(),
+        #         normalize
+        #     ]
+        # else:
+        #     # MoCo v1's aug: same as InstDisc https://arxiv.org/abs/1805.01978
+        #     augmentation = [
+        #         transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+        #         transforms.RandomGrayscale(p=0.2),
+        #         transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
+        #         transforms.RandomHorizontalFlip(),
+        #         transforms.ToTensor(),
+        #         normalize
+        #     ]
+            
+        # # center-crop augmentation 
+        # eval_augmentation = transforms.Compose([
+        #     transforms.Resize(256),
+        #     transforms.CenterCrop(224),
+        #     transforms.ToTensor(),
+        #     normalize
+        #     ])    
+
+        # train_dataset = pcl.loader.ImageFolderInstance(
+        #     traindir,
+        #     pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
+        # eval_dataset = pcl.loader.ImageFolderInstance(
+        #     traindir,
+        #     eval_augmentation)
+
+    traindir = os.path.join(args.data, 'train')
+    normalize = transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.247, 0.243, 0.261]) if args.data =='cifar' else \
+                    transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225])
+    
+
+    crop_size = 32 if args.data == 'cifar' else 224
+    full_size = 32 if args.data == 'cifar' else 256
+        
+    if args.aug_plus:
+        # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
+        augmentation = [
+            transforms.RandomResizedCrop(crop_size, scale=(0.2, 1.)),
+            transforms.RandomApply([
+                transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+            ], p=0.8),
+            transforms.RandomGrayscale(p=0.2),
+            transforms.RandomApply([pcl.loader.GaussianBlur([.1, 2.])], p=0.5),
+            transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize
-            ])  
+        ]
+    else:
+        # MoCo v1's aug: same as InstDisc https://arxiv.org/abs/1805.01978
+        augmentation = [
+            transforms.RandomResizedCrop(crop_size, scale=(0.2, 1.)),
+            transforms.RandomGrayscale(p=0.2),
+            transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalize
+        ]
 
+    # center-crop augmentation 
+    eval_augmentation = transforms.Compose([
+        transforms.Resize(full_size),
+        transforms.CenterCrop(crop_size),
+        transforms.ToTensor(),
+        normalize
+        ])    
+
+
+    if args.data == 'cifar':
         train_dataset = pcl.loader.CIFAR10Instance(
             'data', train=True,
             transform=pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)), download=True)
@@ -192,46 +288,6 @@ def load_data(args):
             'data', train=True,
             transform=eval_augmentation, download=True)
     else:
-
-        # Data loading code
-        # train_dataset, eval_dataset = load_data(args)
-
-        traindir = os.path.join(args.data, 'train')
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                        std=[0.229, 0.224, 0.225])
-        
-        if args.aug_plus:
-            # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
-            augmentation = [
-                transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
-                transforms.RandomApply([
-                    transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
-                ], p=0.8),
-                transforms.RandomGrayscale(p=0.2),
-                transforms.RandomApply([pcl.loader.GaussianBlur([.1, 2.])], p=0.5),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize
-            ]
-        else:
-            # MoCo v1's aug: same as InstDisc https://arxiv.org/abs/1805.01978
-            augmentation = [
-                transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
-                transforms.RandomGrayscale(p=0.2),
-                transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize
-            ]
-            
-        # center-crop augmentation 
-        eval_augmentation = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize
-            ])    
-
         train_dataset = pcl.loader.ImageFolderInstance(
             traindir,
             pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))

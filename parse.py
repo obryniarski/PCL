@@ -98,3 +98,6 @@ class PCL_Parse(argparse.ArgumentParser):
                             help='minPts parameter for DBSCAN/HDBSCAN clustering algorithm')
         self.add_argument('--minSamples', default=5, type=int,
                             help='minSamplesparameter for HDBSCAN clustering algorithm')
+
+        self.add_argument('--k', default=1, type=int,
+                            help='number of protoNCE steps per clustering step')

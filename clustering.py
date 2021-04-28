@@ -142,6 +142,7 @@ from sklearn.manifold import TSNE, LocallyLinearEmbedding
 import matplotlib.pyplot as plt
 import wandb
 from sklearn.decomposition import PCA
+import cuml
 
 def run_dbscan(x, args):
     # make sure the parser args has the necessary dbscan parameters (eps, minPts) - ADDED
@@ -149,31 +150,15 @@ def run_dbscan(x, args):
     # x = x.numpy() # this is already done before calling the function
     # n = x.shape[0] # number of samples
     # d = x.shape[1] # dimension
-    print('performing dbscan clustering')
+    print('performing hdbscan clustering')
     results = {'im2cluster':[],'centroids':[],'density':[],'sampled_protos':[]}
 
-
-    # print(x)
-    # print( np.linalg.norm(x[0] - x[1], ord=2) )
-    # print( np.linalg.norm(x[7] - x[3], ord=2) )
-
-    # visualizing the data
-
-    # print('Visualizing Representations...')
-    # methods = [LocallyLinearEmbedding(n_components=2, method='standard'), TSNE(n_components=2, init='pca')]
-    # fig = plt.figure(figsize=(15,8))
-    # for i, method in enumerate(methods):
-    #     y = method.fit_transform(x)
-    #     ax = fig.add_subplot(1, len(methods), i + 1)
-    #     ax.scatter(y[:, 0], y[:, 1])
-
-    # fig.savefig('visualized_features')
-
-    # plt.show()
 
     x = x.numpy()
     pca = PCA(n_components = 20)
     features = pca.fit_transform(x)
+
+
     # print(pca.explained_variance_ratio_)
 
     # with torch.no_grad():
@@ -185,13 +170,23 @@ def run_dbscan(x, args):
     # db = DBSCAN(eps=args.eps, min_samples=args.minPts, n_jobs=-1, metric='euclidean').fit(features) # run DBSCAN
     # im2cluster = db.labels_
     
-    print(args.minSamples)
+
+    # hdbscan 
+    # print(args.minSamples)
     if args.minSamples:
+        # clusterer = hdbscan.HDBSCAN(min_cluster_size=args.minPts, min_samples=args.minSamples, cluster_selection_method='leaf', allow_single_cluster=True)
         clusterer = hdbscan.HDBSCAN(min_cluster_size=args.minPts, min_samples=args.minSamples)
+
     else:
+        # clusterer = hdbscan.HDBSCAN(min_cluster_size=args.minPts, min_samples=args.minSamples, cluster_selection_method='leaf', allow_single_cluster=True)
         clusterer = hdbscan.HDBSCAN(min_cluster_size=args.minPts)
 
+    # clusterer = cuml.DBSCAN(eps=args.eps, min_samples=args.minPts, verbose=True, output_type='numpy')
+
     im2cluster = clusterer.fit_predict(features)
+    num_clusters = len(set(im2cluster))
+
+    # print(num_clusters)
 
     # print(im2cluster)
     if -1 in im2cluster: # so that noise data is in cluster 0 instead of -1
@@ -208,11 +203,16 @@ def run_dbscan(x, args):
         # Dcluster[i].append(D[im][0])
         Dcluster[i].append(l2_distance(centroids[i], x[im]))
 
+    
+
     # concentration estimation (phi)
     density = np.zeros(len(centroids))
     for i,dist in enumerate(Dcluster):
         if len(dist)>1:
             density[i] = (np.asarray(dist)).mean()/np.log(len(dist)+10) # i got rid of the **0.5 since then we aren't actually doing l2 distances? idk why the authors did it (tbd)    
+            if num_clusters > 1:
+                Dcentroids = np.linalg.norm(centroids[i] -  centroids[list(range(i)) + list(range(i+1, len(centroids)))], axis=1)
+                density[i] += 1 / np.min(Dcentroids)
             
     #if cluster only has one point, use the max to estimate its concentration        
     dmax = density.max()
@@ -224,7 +224,7 @@ def run_dbscan(x, args):
     density = args.temperature*density/density.mean()  #scale the mean to temperature 
 
 
-    wandb.log({'Number of Clusters': len(set(im2cluster))})
+    wandb.log({'Number of Clusters': num_clusters})
 
 
     im2cluster = torch.LongTensor(im2cluster).cuda(args.gpu)   

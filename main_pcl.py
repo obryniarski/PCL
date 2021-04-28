@@ -155,10 +155,12 @@ def main_worker(gpu, ngpus_per_node, args):
         eval_dataset, batch_size=args.batch_size*5, shuffle=False,
         sampler=eval_sampler, num_workers=args.workers, pin_memory=True)
     
+
+    cluster_result = None # move this outside the loop so that clusters stay the same for the next few iterations if args.k > 1
     for epoch in range(args.start_epoch, args.epochs):
         
-        cluster_result = None
-        if epoch>=args.warmup_epoch:
+
+        if epoch>=args.warmup_epoch and epoch % args.k == 0:
 
             optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                 momentum=args.momentum,
@@ -198,6 +200,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch, args, cluster_result)
+        # validate(train_loader, model, criterion, optimizer, epoch, args, cluster_result)
 
         if (epoch+1)%5==0 and (not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0)):
@@ -207,6 +210,9 @@ def main_worker(gpu, ngpus_per_node, args):
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
             }, is_best=False, filename='{}/checkpoint_{:04d}.pth.tar'.format(args.exp_dir,epoch))
+
+
+# def validate(train_loader, model, criterion, optimizer, epoch, args, cluster_result=None):
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result=None):

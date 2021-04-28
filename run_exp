@@ -10,8 +10,8 @@
 echo Running Experiments...
 
 gpu=1
-exp_name=pcl_cifar10_kmeans
-exp_notes=' kmeans had an interesting umap plot at this point, checking accuracy '
+exp_name=pcl_cifar10_hdbscan_k_3_leaf
+exp_notes='Using k=3, so we are doing 3 ProtoNCE epochs for every clustering step'
 
 # —— Unsupervised Runs ——
 
@@ -25,8 +25,8 @@ exp_notes=' kmeans had an interesting umap plot at this point, checking accuracy
 # baseline, normal PCL
 
 #og
-# python main_pcl.py cifar -a resnet50 --lr 0.03 --batch-size 50 --temperature  0.2  --gpu $gpu --num-cluster  '250, 500, 1000' --exp-dir $exp_name --exp-notes "$exp_notes" \
-# --pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 2000 --clustering 'kmeans' --eps 0.3 --minPts 200 --minSamples 0 --epochs 1000 
+python main_pcl.py cifar -a resnet50 --lr 0.03 --batch-size 50 --temperature  0.2  --gpu $gpu --num-cluster  '250' --exp-dir $exp_name --exp-notes "$exp_notes" \
+--pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 20 --clustering 'dbscan' --eps 0.3 --minPts 200 --minSamples 0 --epochs 1000 --k 3
 
 # python main_pcl.py cifar -a resnet50 --lr 0.0007 --batch-size 100 --temperature  0.2  --gpu $gpu --num-cluster  '350' --exp-dir $exp_name --exp-notes "$exp_notes" \
 # --pcl-r 200 --mlp --aug-plus --cos --low-dim 128 --norm-p 2 --warmup-epoch 300 --clustering 'dbscan' --eps 0.03 --minPts 50 
@@ -50,8 +50,8 @@ exp_notes=' kmeans had an interesting umap plot at this point, checking accuracy
 
 # exp_name=pcl_cifar10_hdbscan_density_fixed_1
 
-python eval_cls_imagenet.py cifar --pretrained "$exp_name/checkpoint_0704.pth.tar" -a resnet50  \
---lr 0.05 --batch-size 256 --id cifar_linear -p 50 --gpu $gpu --epochs 100 --exp-name "$exp_name 704"
+python eval_cls_imagenet.py cifar --pretrained "$exp_name/checkpoint_0199.pth.tar" -a resnet50  \
+--lr 0.05 --batch-size 256 --id cifar_linear -p 50 --gpu $gpu --epochs 100 --exp-name "$exp_name"
 
 
 

@@ -16,7 +16,9 @@ import math
 import torchvision.datasets as datasets
 from PIL import ImageFilter, Image
 import umap
-import umap.plot
+
+import cuml
+# import umap.plot
 
 class CIFAR10Instance_w_label(datasets.CIFAR10):
     def __getitem__(self, index):
@@ -140,7 +142,7 @@ def l2_distance(x, y):
     return np.linalg.norm(x - y)
 
 
-def run_dbscan(x, minPts=200, minSamples=0, temperature=0.2):
+def run_dbscan(x, minPts=200, minSamples=0, temperature=0.2, eps=0.3):
     # make sure the parser args has the necessary dbscan parameters (eps, minPts) - ADDED
 
     # x = x.numpy() # this is already done before calling the function
@@ -155,13 +157,15 @@ def run_dbscan(x, minPts=200, minSamples=0, temperature=0.2):
     features = pca.fit_transform(x)
     # print(pca.explained_variance_ratio_)
 
-    # db = DBSCAN(eps=args.eps, min_samples=args.minPts, n_jobs=-1, metric='euclidean').fit(features) # run DBSCAN
     # im2cluster = db.labels_
 
     if minSamples:
         clusterer = hdbscan.HDBSCAN(min_cluster_size=minPts, min_samples=minSamples)
     else:
         clusterer = hdbscan.HDBSCAN(min_cluster_size=minPts)
+
+    # clusterer = DBSCAN(eps=eps, min_samples=minPts, n_jobs=-1, metric='euclidean').fit(features) # run DBSCAN
+    # im2cluster = clusterer.labels_
 
     im2cluster = clusterer.fit_predict(features)
     
@@ -394,7 +398,7 @@ def plot_umap(num_classes=20, num_samples=10000):
 
         y = reducer.fit_transform(features)
 
-        ax = umap.plot.points(reducer, labels=restricted_classes)
+        # ax = umap.plot.points(reducer, labels=restricted_classes) # need to change this
 
         ax.set_title('hparam: {}'.format(hparam))
 
@@ -440,8 +444,10 @@ def plot_progression(checkpoint_id, num_rows=3, num_progressions=9, num_classes=
         restricted_classes = restricted_classes[:num_samples]
 
         if algorithm == 'umap':
-            reducer = umap.UMAP(n_neighbors = 60, min_dist=0.1, n_components=2, metric='cosine')
+            # reducer = umap.UMAP(n_neighbors = 60, min_dist=0.1, n_components=2, metric='cosine')
+            reducer = cuml.UMAP(n_neighbors=60, min_dist=0.1, n_components=2, n_epochs=1000)
             y = reducer.fit_transform(features)
+
         elif algorithm == 'tsne':
             tsne = cudaTSNE(n_components=2, perplexity=50, learning_rate=600, verbose=1, n_iter=2500, metric='euclidean')
             y = tsne.fit_transform(features)
@@ -451,7 +457,8 @@ def plot_progression(checkpoint_id, num_rows=3, num_progressions=9, num_classes=
             scatter = axes.flat[i].scatter(y[:, 0], y[:, 1], c = restricted_classes, cmap='Spectral', s=3)
         else:
             with torch.no_grad():
-                results = run_dbscan(features, minPts=50, minSamples=0, temperature=0.2)
+                results = run_dbscan(features, minPts=200, minSamples=0, temperature=0.2)
+                # results = run_kmeans(features, num_cluster=['250'])
                 im2cluster = results['im2cluster'][0].tolist() # remember to turn this back to a list
             scatter = axes.flat[i].scatter(y[:, 0], y[:, 1], c = im2cluster, cmap='Spectral', s=3) # restricting num_classes does not work here
 
@@ -479,7 +486,8 @@ def plot_comparison(checkpoint_id, num_progressions=5, num_classes=20, num_sampl
     assert num_progressions <= len(checkpoints), 'Not enough checkpoints saved.'
     checkpoints = [checkpoints[i] for i in range(0, len(checkpoints), len(checkpoints) // (num_progressions-1))][:num_progressions-1] + [checkpoints[-1]]
 
-    fig, axes = plt.subplots(len(checkpoints), 2, figsize=(30,50))
+    # fig, axes = plt.subplots(len(checkpoints), 2, figsize=(30,50))
+    fig, axes = plt.subplots(2, len(checkpoints), figsize=(60,30))
 
     print(checkpoints)
 
@@ -501,25 +509,26 @@ def plot_comparison(checkpoint_id, num_progressions=5, num_classes=20, num_sampl
         restricted_classes = restricted_classes[:num_samples]
 
         if algorithm == 'umap':
-            reducer = umap.UMAP(n_neighbors = 60, min_dist=0.1, n_components=2, metric='cosine')
+            # reducer = umap.UMAP(n_neighbors = 60, min_dist=0.1, n_components=2, metric='cosine')
+            reducer = cuml.UMAP(n_neighbors=60, min_dist=0.1, n_components=2, n_epochs=1000)
             y = reducer.fit_transform(features)
         elif algorithm == 'tsne':
             tsne = cudaTSNE(n_components=2, perplexity=50, learning_rate=600, verbose=1, n_iter=2500, metric='euclidean')
             y = tsne.fit_transform(features)
 
-
-        scatter = axes.flat[2*i].scatter(y[:, 0], y[:, 1], c = restricted_classes, cmap='Spectral', s=3)
+        scatter = axes.flat[i].scatter(y[:, 0], y[:, 1], c = restricted_classes, cmap='Spectral', s=3)
         with torch.no_grad():
-            results = run_dbscan(features, minPts=200, minSamples=0, temperature=0.2)
+            results = run_dbscan(features, minPts=200, minSamples=0, temperature=0.2, eps=0.3)
+            # results = run_kmeans(features, num_cluster=['250'])
             im2cluster = results['im2cluster'][0].tolist() # remember to turn this back to a list
-        scatter = axes.flat[2*i + 1].scatter(y[:, 0], y[:, 1], c = im2cluster, cmap='Spectral', s=3) # restricting num_classes does not work here
+        scatter = axes.flat[i + num_progressions].scatter(y[:, 0], y[:, 1], c = im2cluster, cmap='Spectral', s=3) # restricting num_classes does not work here
 
 
         # legend = axes.flat[i].legend(*scatter.legend_elements(), loc='lower left', title="Classes")
         # axes.flat[i].add_artist(legend)
 
-        axes.flat[2*i].set_title('Cifar Classes, epoch: {}'.format(epoch))
-        axes.flat[2*i + 1].set_title('Clustering Classes, epoch: {}'.format(epoch))
+        axes.flat[i].set_title('Cifar Classes, epoch: {}'.format(epoch))
+        axes.flat[i + num_progressions].set_title('Clustering Classes, epoch: {}'.format(epoch))
 
     
     # axes.flat[-1].legend(*scatter.legend_elements(), loc='lower left', title="Classes", bbox_to_anchor=(1.00, 0), prop={'size': 25})
@@ -603,7 +612,7 @@ model = pcl.builder.MoCo(
     low_dim, pcl_r, moco_m, temperature, mlp, centroid_sampling, 
     norm_p)
 
-gpu = 0
+gpu = 1
 model = model.cuda(gpu)
 
 
@@ -633,10 +642,13 @@ eval_loader = torch.utils.data.DataLoader(
 # checkpoint_id=['InfoNCE','0109']
 # checkpoint_id=['hdbscan_minsamples_5','0199']
 # checkpoint_id=['hdbscan_density_fixed_1','0199']
+
 # checkpoint_id=['hdbscan','0019']
 # checkpoint_id=['kmeans','0019']
-checkpoint_id=['InfoNCE','0019']
+# checkpoint_id=['InfoNCE','0019']
 
+checkpoint_id=['hdbscan_pulling','0019']
+# checkpoint_id=['hdbscan_k_3_leaf','0019']
 
 
 start_time = time()
